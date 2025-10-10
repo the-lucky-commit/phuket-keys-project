@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manage Properties - PHUKET KEYS</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="admin-style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+</head>
+<body>
+    <div class="admin-wrapper">
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <img src="phuket_keys_logo.png" alt="Logo" class="sidebar-logo">
+                <h2>Admin Panel</h2>
+            </div>
+            <nav class="sidebar-nav">
+                <ul>
+                    <li><a href="admin.html"><i class="fas fa-tachometer-alt"></i> Dashboard</a></li>
+                    <li class="active"><a href="admin-properties.html"><i class="fas fa-home"></i> Properties</a></li>
+                    <li><a href="#"><i class="fas fa-envelope"></i> Messages</a></li>
+                    <li><a href="#"><i class="fas fa-cog"></i> Settings</a></li>
+                    <li><a href="/index.html"><i class="fas fa-sign-out-alt"></i> Logout</a></li>
+                </ul>
+            </nav>
+        </aside>
+
+        <main class="main-content">
+            <header class="main-header with-button">
+                <h1>Manage Properties</h1>
+                <a href="#" class="btn-primary"><i class="fas fa-plus"></i> Add New Property</a>
+            </header>
+
+            <section class="content-area">
+                <div class="table-container full-width">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Image</th>
+                                <th>Property Title</th>
+                                <th>Status</th>
+                                <th>Price</th>
+                                <th>Date Added</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            </tbody>
+                    </table>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const propertiesTableBody = document.querySelector('table tbody');
+
+            // --- ฟังก์ชันสำหรับโหลดข้อมูล Property ---
+            async function loadProperties() {
+                try {
+                    const response = await fetch('/api/admin/properties');
+                    if (!response.ok) throw new Error('Failed to fetch');
+                    const properties = await response.json();
+                    
+                    renderTable(properties);
+                } catch (error) {
+                    console.error('Error loading properties:', error);
+                    propertiesTableBody.innerHTML = '<tr><td colspan="6">Error loading data. Please check the server.</td></tr>';
+                }
+            }
+
+            // --- ฟังก์ชันสำหรับสร้างตาราง ---
+            function renderTable(properties) {
+                propertiesTableBody.innerHTML = ''; // เคลียร์ของเก่า
+                if (properties.length === 0) {
+                    propertiesTableBody.innerHTML = '<tr><td colspan="6" style="text-align: center;">No properties found.</td></tr>';
+                    return;
+                }
+
+                properties.forEach(prop => {
+                    const priceFormatted = new Intl.NumberFormat('th-TH').format(prop.price);
+                    const dateFormatted = new Date(prop.created_at).toLocaleDateString('en-GB'); // Format: DD/MM/YYYY
+
+                    const row = `
+                        <tr data-id="${prop.id}">
+                            <td><img src="${prop.main_image_url || 'img/placeholder.jpg'}" alt="${prop.title}" class="property-thumb"></td>
+                            <td>${prop.title}</td>
+                            <td><span class="status ${prop.status.toLowerCase().replace('for ', '')}">${prop.status}</span></td>
+                            <td>฿ ${priceFormatted} ${prop.price_period || ''}</td>
+                            <td>${dateFormatted}</td>
+                            <td class="actions">
+                                <a href="#" class="action-btn edit" data-id="${prop.id}"><i class="fas fa-pencil-alt"></i></a>
+                                <a href="#" class="action-btn delete" data-id="${prop.id}"><i class="fas fa-trash-alt"></i></a>
+                            </td>
+                        </tr>
+                    `;
+                    propertiesTableBody.insertAdjacentHTML('beforeend', row);
+                });
+            }
+
+            propertiesTableBody.addEventListener('click', async (event) => {
+                const deleteButton = event.target.closest('.delete');
+                if (!deleteButton) return;
+
+                event.preventDefault();
+                const propertyId = deleteButton.dataset.id;
+                const propertyRow = deleteButton.closest('tr');
+                const propertyTitle = propertyRow.querySelector('td:nth-child(2)').textContent;
+
+                if (confirm(`Are you sure you want to delete "${propertyTitle}"?`)) {
+                    try {
+                        const response = await fetch(`/api/admin/properties/${propertyId}`, {
+                            method: 'DELETE'
+                        });
+
+                        if (!response.ok) {
+                           const err = await response.json();
+                           throw new Error(err.message || 'Failed to delete');
+                        }
+                        
+                        // ลบแถวออกจากตารางทันที
+                        propertyRow.remove();
+
+                    } catch (error) {
+                        console.error('Error deleting property:', error);
+                        alert('Could not delete the property.');
+                    }
+                }
+            });
+
+            // เริ่มโหลดข้อมูลครั้งแรก
+            loadProperties();
+        });
+    </script>
+</body>
+</html>

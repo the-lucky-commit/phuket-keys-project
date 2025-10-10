@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Dashboard - PHUKET KEYS</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="admin-style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+</head>
+<body>
+    <div class="admin-wrapper">
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <img src="phuket_keys_logo.png" alt="Logo" class="sidebar-logo">
+                <h2>Admin Panel</h2>
+            </div>
+            <nav class="sidebar-nav">
+                <ul>
+                    <li class="active"><a href="admin.html"><i class="fas fa-tachometer-alt"></i> Dashboard</a></li>
+                    <li><a href="admin-properties.html"><i class="fas fa-home"></i> Properties</a></li>
+                    <li><a href="#"><i class="fas fa-envelope"></i> Messages</a></li>
+                    <li><a href="#"><i class="fas fa-cog"></i> Settings</a></li>
+                    <li><a href="/index.html"><i class="fas fa-sign-out-alt"></i> Logout</a></li>
+                </ul>
+            </nav>
+        </aside>
+
+        <main class="main-content">
+            <header class="main-header">
+                <h1>Dashboard Overview</h1>
+                <div class="user-info">
+                    <span>Welcome, Admin</span>
+                    <i class="fas fa-user-circle"></i>
+                </div>
+            </header>
+
+            <section class="stat-cards">
+                <div class="card">
+                    <div class="card-icon"><i class="fas fa-home"></i></div>
+                    <div class="card-info">
+                        <p>Total Properties</p>
+                        <h3>125</h3>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-icon"><i class="fas fa-handshake"></i></div>
+                    <div class="card-info">
+                        <p>Properties for Sale</p>
+                        <h3>78</h3>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-icon"><i class="fas fa-key"></i></div>
+                    <div class="card-info">
+                        <p>Properties for Rent</p>
+                        <h3>47</h3>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-icon"><i class="fas fa-inbox"></i></div>
+                    <div class="card-info">
+                        <p>New Messages</p>
+                        <h3>12</h3>
+                    </div>
+                </div>
+            </section>
+
+            <section class="main-tables">
+                <div class="table-container">
+                    <h2>Recent Properties Added</h2>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Property Name</th>
+                                <th>Type</th>
+                                <th>Status</th>
+                                <th>Price</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>Luxury Sea View Villa</td>
+                                <td>Villa</td>
+                                <td><span class="status sale">For Sale</span></td>
+                                <td>฿ 25,000,000</td>
+                            </tr>
+                            <tr>
+                                <td>Modern Condo in Town</td>
+                                <td>Condo</td>
+                                <td><span class="status rent">For Rent</span></td>
+                                <td>฿ 45,000 / Mo</td>
+                            </tr>
+                            <tr>
+                                <td>Cozy Family House</td>
+                                <td>House</td>
+                                <td><span class="status sale">For Sale</span></td>
+                                <td>฿ 18,000,000</td>
+                            </tr>
+                            <tr>
+                                <td>Beachfront Apartment</td>
+                                <td>Condo</td>
+                                <td><span class="status rent">For Rent</span></td>
+                                <td>฿ 60,000 / Mo</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="table-container">
+                    <h2>Recent Messages</h2>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>From</th>
+                                <th>Subject</th>
+                                <th>Date</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>John Doe</td>
+                                <td>Inquiry on Sea View Villa</td>
+                                <td>20 Sep 2025</td>
+                                <td><a href="#" class="btn-outline">View</a></td>
+                            </tr>
+                            <tr>
+                                <td>Jane Smith</td>
+                                <td>Question about Condo</td>
+                                <td>20 Sep 2025</td>
+                                <td><a href="#" class="btn-outline">View</a></td>
+                            </tr>
+                            <tr>
+                                <td>Peter Jones</td>
+                                <td>Rental request</td>
+                                <td>19 Sep 2025</td>
+                                <td><a href="#" class="btn-outline">View</a></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        </main>
+    </div>
+</body>
+</html>
