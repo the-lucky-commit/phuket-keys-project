@@ -149,9 +149,6 @@ app.use('/api/admin', adminRouter);
 // GET all properties (with search functionality)
 app.get('/api/properties', async (req, res) => {
     try {
-        // ---- DEBUGGING POINT 1: ดูว่า API ได้รับ query อะไรมาบ้าง ----
-        console.log('Received search query:', req.query);
-
         const { status, type, keyword } = req.query;
 
         let baseQuery = 'SELECT * FROM properties';
@@ -167,7 +164,7 @@ app.get('/api/properties', async (req, res) => {
             conditions.push(`LOWER(title) LIKE $${counter++}`);
             values.push(`%${type.toLowerCase()}%`);
         }
-        if (keyword && keyword.trim() !== '') { // เพิ่มการตรวจสอบค่าว่าง
+        if (keyword && keyword.trim() !== '') {
             conditions.push(`LOWER(title) LIKE $${counter++}`);
             values.push(`%${keyword.toLowerCase()}%`);
         }
@@ -178,11 +175,9 @@ app.get('/api/properties', async (req, res) => {
 
         baseQuery += ' ORDER BY created_at DESC';
 
-        // ---- DEBUGGING POINT 2: ดูว่าคำสั่ง SQL สุดท้ายหน้าตาเป็นอย่างไร ----
-        console.log('Executing SQL:', baseQuery);
-        console.log('With values:', values);
-
+        // --- แก้ไขบรรทัดนี้ ---
         const { rows } = await pool.query(baseQuery, values);
+        
         res.json(rows);
     } catch (error) {
         console.error('Error fetching public properties:', error);
