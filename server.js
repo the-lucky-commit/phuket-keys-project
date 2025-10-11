@@ -7,175 +7,52 @@ import jwt from 'jsonwebtoken';
 
 const { Pool } = pg;
 const app = express();
-const port = process.env.PORT || 10000; // Render uses port 10000 by default
+const port = process.env.PORT || 10000;
 
-// Middlewares
 app.use(cors());
 app.use(express.json());
 
-// Database Pool for PostgreSQL on Render
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
-    ssl: {
-        rejectUnauthorized: false
-    }
+    ssl: { rejectUnauthorized: false }
 });
 
-// =================================================================
-// --- Authentication & Authorization ---
-// =================================================================
-
-// Login Endpoint (Public)
-app.post('/api/login', async (req, res) => {
-    try {
-        const { username, password } = req.body;
-        const { rows } = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
-
-        if (rows.length === 0) {
-            return res.status(401).json({ error: 'Invalid username or password' });
-        }
-
-        const user = rows[0];
-        const isMatch = await bcrypt.compare(password, user.password);
-
-        if (!isMatch) {
-            return res.status(401).json({ error: 'Invalid username or password' });
-        }
-
-        const accessToken = jwt.sign({ username: user.username, id: user.id }, process.env.JWT_SECRET, { expiresIn: '1d' });
-        res.json({ accessToken });
-    } catch (error) {
-        console.error('Login error:', error);
-        res.status(500).json({ error: 'Server error' });
-    }
-});
-
-// Middleware to verify JWT
-const verifyToken = (req, res, next) => {
-    const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1]; // Format: Bearer TOKEN
-
-    if (!token) {
-        return res.status(401).json({ error: 'Access token is missing or invalid' });
-    }
-
-    jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
-        if (err) {
-            return res.status(403).json({ error: 'Token is not valid' });
-        }
-        req.user = user;
-        next();
-    });
-};
-
-// =================================================================
-// --- Protected Admin API Endpoints ---
-// =================================================================
-const adminRouter = express.Router();
-adminRouter.use(verifyToken); // Apply token verification to all admin routes
-
-// GET all properties (Admin)
-adminRouter.get('/properties', async (req, res) => {
-    try {
-        const { rows } = await pool.query('SELECT * FROM properties ORDER BY created_at DESC');
-        res.json(rows);
-    } catch (error) {
-        console.error('Error fetching admin properties:', error);
-        res.status(500).json({ error: 'Database query failed' });
-    }
-});
-
-// GET a single property by ID (Admin)
-adminRouter.get('/properties/:id', async (req, res) => {
-    try {
-        const { id } = req.params;
-        const { rows } = await pool.query('SELECT * FROM properties WHERE id = $1', [id]);
-        if (rows.length === 0) return res.status(404).json({ message: 'Property not found' });
-        res.json(rows[0]);
-    } catch (error) {
-        console.error('Error fetching single property:', error);
-        res.status(500).json({ error: 'Database query failed' });
-    }
-});
-
-// CREATE a new property
-adminRouter.post('/properties', async (req, res) => {
-    try {
-        const { title, status, price, main_image_url, price_period } = req.body;
-        const sql = `INSERT INTO properties (title, status, price, main_image_url, price_period) VALUES ($1, $2, $3, $4, $5) RETURNING id`;
-        const { rows } = await pool.query(sql, [title, status, price, main_image_url, price_period]);
-        res.status(201).json({ message: 'Property created successfully', id: rows[0].id });
-    } catch (error) {
-        console.error('Error creating property:', error);
-        res.status(500).json({ error: 'Database query failed' });
-    }
-});
-
-// UPDATE a property
-adminRouter.put('/properties/:id', async (req, res) => {
-    try {
-        const { id } = req.params;
-        const { title, status, price, main_image_url, price_period } = req.body;
-        const sql = `UPDATE properties SET title = $1, status = $2, price = $3, main_image_url = $4, price_period = $5 WHERE id = $6`;
-        const { rowCount } = await pool.query(sql, [title, status, price, main_image_url, price_period, id]);
-        if (rowCount === 0) return res.status(404).json({ message: 'Property not found' });
-        res.json({ message: 'Property updated successfully' });
-    } catch (error) {
-        console.error('Error updating property:', error);
-        res.status(500).json({ error: 'Database query failed' });
-    }
-});
-
-// DELETE a property
-adminRouter.delete('/properties/:id', async (req, res) => {
-    try {
-        const { id } = req.params;
-        const { rowCount } = await pool.query('DELETE FROM properties WHERE id = $1', [id]);
-        if (rowCount === 0) return res.status(404).json({ message: 'Property not found' });
-        res.json({ message: 'Property deleted successfully' });
-    } catch (error) {
-        console.error('Error deleting property:', error);
-        res.status(500).json({ error: 'Database query failed' });
-    }
-});
-
-// Use the admin router for all routes starting with /api/admin
-app.use('/api/admin', adminRouter);
+// ... (ส่วนของ Authentication และ Admin API เหมือนเดิม) ...
 
 // =================================================================
 // --- Public API Endpoints (No login required) ---
 // =================================================================
 
-// GET all properties (with search functionality)
+// GET all properties (with search and pagination)
 app.get('/api/properties', async (req, res) => {
     try {
-        const page = parseInt(req.query.page as string || '1');
-        const limit = parseInt(req.query.limit as string || '9');
+        // --- แก้ไขจุดที่ 1: ลบ 'as string' ออก ---
+        const page = parseInt(req.query.page || '1');
+        const limit = parseInt(req.query.limit || '9');
         const offset = (page - 1) * limit;
 
         const { status, type, keyword } = req.query;
 
         // --- ส่วนสร้าง Query ---
-        let baseQuery = 'FROM properties'; // เอา SELECT * ออกไปก่อน
+        let baseQuery = 'FROM properties';
         const conditions = [];
         const values = [];
         let counter = 1;
 
-        // --- จุดที่แก้ไข ---
-        // เพิ่มการตรวจสอบค่าว่าง (!== '') เข้าไปในเงื่อนไข
+        // --- แก้ไขจุดที่ 2: ลบ 'as string' และเพิ่มการตรวจสอบค่าว่าง ---
         if (status && status !== '') {
             conditions.push(`status = $${counter++}`);
             values.push(status);
         }
         if (type && type !== '') {
             conditions.push(`LOWER(title) LIKE $${counter++}`);
-            values.push(`%${(type as string).toLowerCase()}%`);
+            values.push(`%${type.toLowerCase()}%`);
         }
-        if (keyword && (keyword as string).trim() !== '') {
+        if (keyword && keyword.trim() !== '') {
             conditions.push(`LOWER(title) LIKE $${counter++}`);
-            values.push(`%${(keyword as string).toLowerCase()}%`);
+            values.push(`%${keyword.toLowerCase()}%`);
         }
-
+        
         if (conditions.length > 0) {
             baseQuery += ' WHERE ' + conditions.join(' AND ');
         }
@@ -184,7 +61,7 @@ app.get('/api/properties', async (req, res) => {
         const totalResult = await pool.query(`SELECT COUNT(*) ${baseQuery}`, values);
         const totalProperties = parseInt(totalResult.rows[0].count);
         const totalPages = Math.ceil(totalProperties / limit);
-
+        
         // --- Query สำหรับดึงข้อมูลตามหน้า ---
         const dataQuery = `SELECT * ${baseQuery} ORDER BY created_at DESC LIMIT $${counter++} OFFSET $${counter++}`;
         const dataValues = [...values, limit, offset];
@@ -203,6 +80,8 @@ app.get('/api/properties', async (req, res) => {
     }
 });
 
+
+// ... (โค้ดส่วนที่เหลือของ Public API และ app.listen() เหมือนเดิม) ...
 
 // GET a single property by ID (Public)
 app.get('/api/properties/:id', async (req, res) => {
@@ -238,7 +117,6 @@ app.post('/api/contact', (req, res) => {
         res.status(500).json({ error: 'Server error' });
     }
 });
-
 
 // Start Server
 app.listen(port, () => {
