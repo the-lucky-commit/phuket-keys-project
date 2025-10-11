@@ -149,36 +149,56 @@ app.use('/api/admin', adminRouter);
 // GET all properties (with search functionality)
 app.get('/api/properties', async (req, res) => {
     try {
+        // รับค่า page และ limit จาก query, ถ้าไม่มีให้ใช้ค่าเริ่มต้น
+        const page = parseInt(req.query.page as string || '1');
+        const limit = parseInt(req.query.limit as string || '10');
+        const offset = (page - 1) * limit;
+
         const { status, type, keyword } = req.query;
 
-        let baseQuery = 'SELECT * FROM properties';
-        const conditions = [];
-        const values = [];
-        let counter = 1;
+        // --- ส่วนสร้าง Query สำหรับนับจำนวนทั้งหมด (Total Count) ---
+        let countQuery = 'SELECT COUNT(*) FROM properties';
+        const countConditions = [];
+        const countValues = [];
+        let countCounter = 1;
 
         if (status) {
-            conditions.push(`status = $${counter++}`);
-            values.push(status);
+            countConditions.push(`status = $${countCounter++}`);
+            countValues.push(status);
         }
         if (type) {
-            conditions.push(`LOWER(title) LIKE $${counter++}`);
-            values.push(`%${type.toLowerCase()}%`);
+            countConditions.push(`LOWER(title) LIKE $${countCounter++}`);
+            countValues.push(`%${(type as string).toLowerCase()}%`);
         }
-        if (keyword && keyword.trim() !== '') {
-            conditions.push(`LOWER(title) LIKE $${counter++}`);
-            values.push(`%${keyword.toLowerCase()}%`);
+        if (keyword && (keyword as string).trim() !== '') {
+            countConditions.push(`LOWER(title) LIKE $${countCounter++}`);
+            countValues.push(`%${(keyword as string).toLowerCase()}%`);
+        }
+        if (countConditions.length > 0) {
+            countQuery += ' WHERE ' + countConditions.join(' AND ');
         }
 
-        if (conditions.length > 0) {
-            baseQuery += ' WHERE ' + conditions.join(' AND ');
+        const totalResult = await pool.query(countQuery, countValues);
+        const totalProperties = parseInt(totalResult.rows[0].count);
+        const totalPages = Math.ceil(totalProperties / limit);
+
+        // --- ส่วนสร้าง Query สำหรับดึงข้อมูลตามหน้า (Paginated Data) ---
+        let dataQuery = 'SELECT * FROM properties';
+        if (countConditions.length > 0) {
+            dataQuery += ' WHERE ' + countConditions.join(' AND ');
         }
+        dataQuery += ` ORDER BY created_at DESC LIMIT $${countCounter++} OFFSET $${countCounter++}`;
+        const dataValues = [...countValues, limit, offset];
 
-        baseQuery += ' ORDER BY created_at DESC';
+        const { rows } = await pool.query(dataQuery, dataValues);
 
-        // --- แก้ไขบรรทัดนี้ ---
-        const { rows } = await pool.query(baseQuery, values);
-        
-        res.json(rows);
+        // ส่งข้อมูลกลับไปพร้อมกับข้อมูล Pagination
+        res.json({
+            properties: rows,
+            currentPage: page,
+            totalPages: totalPages
+        });
+
     } catch (error) {
         console.error('Error fetching public properties:', error);
         res.status(500).json({ error: 'Database query failed' });
