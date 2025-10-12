@@ -103,9 +103,9 @@ adminRouter.get('/properties/:id', async (req, res) => {
 
 adminRouter.post('/properties', async (req, res) => {
     try {
-        const { title, status, price, main_image_url, price_period } = req.body;
-        const sql = `INSERT INTO properties (title, status, price, main_image_url, price_period) VALUES ($1, $2, $3, $4, $5) RETURNING id`;
-        const { rows } = await pool.query(sql, [title, status, price, main_image_url, price_period]);
+        const { title, status, price, main_image_url, price_period, bedrooms, bathrooms, area_sqm, description } = req.body;
+        const sql = `INSERT INTO properties (title, status, price, main_image_url, price_period, bedrooms, bathrooms, area_sqm, description) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`;
+        const { rows } = await pool.query(sql, [title, status, price, main_image_url, price_period, bedrooms, bathrooms, area_sqm, description]);
         res.status(201).json({ message: 'Property created successfully', id: rows[0].id });
     } catch (error) {
         console.error('Error creating property:', error);
@@ -116,9 +116,9 @@ adminRouter.post('/properties', async (req, res) => {
 adminRouter.put('/properties/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        const { title, status, price, main_image_url, price_period } = req.body;
-        const sql = `UPDATE properties SET title = $1, status = $2, price = $3, main_image_url = $4, price_period = $5 WHERE id = $6`;
-        const { rowCount } = await pool.query(sql, [title, status, price, main_image_url, price_period, id]);
+        const { title, status, price, main_image_url, price_period, bedrooms, bathrooms, area_sqm, description } = req.body;
+        const sql = `UPDATE properties SET title = $1, status = $2, price = $3, main_image_url = $4, price_period = $5, bedrooms = $6, bathrooms = $7, area_sqm = $8, description = $9 WHERE id = $10`;
+        const { rowCount } = await pool.query(sql, [title, status, price, main_image_url, price_period, bedrooms, bathrooms, area_sqm, description, id]);
         if (rowCount === 0) return res.status(404).json({ message: 'Property not found' });
         res.json({ message: 'Property updated successfully' });
     } catch (error) {
