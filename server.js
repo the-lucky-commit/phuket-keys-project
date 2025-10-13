@@ -6,7 +6,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import multer from 'multer';
 import { v2 as cloudinary } from 'cloudinary';
-import nodemailer from 'nodemailer'; // <-- มี Nodemailer import เข้ามาแล้ว
+import sgMail from '@sendgrid/mail'; // Import SendGrid
 
 const { Pool } = pg;
 const app = express();
@@ -225,30 +225,24 @@ app.get('/api/properties/:id', async (req, res) => {
     }
 });
 
-// --- Contact Form Endpoint (with Nodemailer) ---
-app.post('/api/contact', (req, res) => {
+// --- Contact Form Endpoint (with SendGrid) ---
+app.post('/api/contact', async (req, res) => {
+    sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+    
     try {
         const { name, email, phone, message } = req.body;
         if (!name || !email || !message) {
             return res.status(400).json({ error: 'Name, email, and message are required.' });
         }
 
-        const transporter = nodemailer.createTransport({
-            service: 'gmail',
-            auth: {
-                user: process.env.EMAIL_USER,
-                pass: process.env.EMAIL_PASS,
-            },
-        });
-
-        const mailOptions = {
-            from: `"Phuket Keys Website" <${process.env.EMAIL_USER}>`,
-            to: process.env.EMAIL_USER,
+        const msg = {
+            to: process.env.SENDGRID_SENDER_EMAIL,
+            from: process.env.SENDGRID_SENDER_EMAIL,
             subject: `New Message from ${name} via Website`,
             html: `
                 <h2>New Contact Form Submission</h2>
                 <p><strong>Name:</strong> ${name}</p>
-                <p><strong>Email:</strong> ${email}</p>
+                <p><strong>Reply-To:</strong> ${email}</p>
                 <p><strong>Phone:</strong> ${phone || 'Not provided'}</p>
                 <hr>
                 <p><strong>Message:</strong></p>
@@ -256,18 +250,17 @@ app.post('/api/contact', (req, res) => {
             `,
         };
 
-        transporter.sendMail(mailOptions, (error, info) => {
-            if (error) {
-                console.error('Nodemailer Error:', error);
-                return res.status(500).json({ error: 'Failed to send message.' });
-            }
-            console.log('Message sent: %s', info.messageId);
-            res.status(200).json({ success: true, message: 'Message sent successfully!' });
-        });
+        await sgMail.send(msg);
+
+        console.log('Message sent via SendGrid');
+        res.status(200).json({ success: true, message: 'Message sent successfully!' });
 
     } catch (error) {
-        console.error('Error handling contact form:', error);
-        res.status(500).json({ error: 'Server error' });
+        console.error('SendGrid Error:', error);
+        if (error.response) {
+            console.error(error.response.body)
+        }
+        res.status(500).json({ error: 'Failed to send message.' });
     }
 });
 
