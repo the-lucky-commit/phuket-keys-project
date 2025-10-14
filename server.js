@@ -77,12 +77,19 @@ const verifyToken = (req, res, next) => {
 const adminRouter = express.Router();
 adminRouter.use(verifyToken);
 
-adminRouter.get('/properties', async (req, res) => {
+adminRouter.get('/stats', async (req, res) => {
     try {
-        const { rows } = await pool.query('SELECT * FROM properties ORDER BY created_at DESC');
-        res.json(rows);
+        const statsQuery = `
+            SELECT
+                COUNT(*) AS total_properties,
+                SUM(CASE WHEN status = 'For Sale' THEN 1 ELSE 0 END) AS for_sale,
+                SUM(CASE WHEN status = 'For Rent' THEN 1 ELSE 0 END) AS for_rent
+            FROM properties;
+        `;
+        const { rows } = await pool.query(statsQuery);
+        res.json(rows[0]);
     } catch (error) {
-        console.error('Error fetching admin properties:', error);
+        console.error('Error fetching dashboard stats:', error);
         res.status(500).json({ error: 'Database query failed' });
     }
 });
