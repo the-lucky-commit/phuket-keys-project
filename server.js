@@ -6,28 +6,25 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import multer from 'multer';
 import { v2 as cloudinary } from 'cloudinary';
-import sgMail from '@sendgrid/mail'; // Import SendGrid
+import sgMail from '@sendgrid/mail';
 
 const { Pool } = pg;
 const app = express();
 const port = process.env.PORT || 10000;
 
-// Middlewares
+// Middlewares & Configs
 app.use(cors());
 app.use(express.json());
 
-// --- Cloudinary Config ---
 cloudinary.config({
   cloud_name: process.env.CLOUD_NAME,
   api_key: process.env.API_KEY,
   api_secret: process.env.API_SECRET,
 });
 
-// --- Multer Config ---
 const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
 
-// --- Database Pool ---
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: {
@@ -93,9 +90,15 @@ adminRouter.get('/properties', async (req, res) => {
 adminRouter.get('/properties/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        const { rows } = await pool.query('SELECT * FROM properties WHERE id = $1', [id]);
-        if (rows.length === 0) return res.status(404).json({ message: 'Property not found' });
-        res.json(rows[0]);
+        const propertyRes = await pool.query('SELECT * FROM properties WHERE id = $1', [id]);
+        if (propertyRes.rows.length === 0) return res.status(404).json({ message: 'Property not found' });
+        
+        const imagesRes = await pool.query('SELECT id, image_url FROM property_images WHERE property_id = $1 ORDER BY created_at ASC', [id]);
+        
+        const property = propertyRes.rows[0];
+        property.images = imagesRes.rows;
+
+        res.json(property);
     } catch (error) {
         console.error('Error fetching single property:', error);
         res.status(500).json({ error: 'Database query failed' });
@@ -140,9 +143,55 @@ adminRouter.delete('/properties/:id', async (req, res) => {
     }
 });
 
+adminRouter.post('/properties/:id/images', upload.array('images', 5), async (req, res) => {
+    try {
+        const { id } = req.params;
+        const files = req.files;
+        if (!files || files.length === 0) {
+            return res.status(400).json({ error: 'No files uploaded.' });
+        }
+
+        const uploadPromises = files.map(file => {
+            const b64 = Buffer.from(file.buffer).toString('base64');
+            let dataURI = "data:" + file.mimetype + ";base64," + b64;
+            return cloudinary.uploader.upload(dataURI, { folder: "phuket-keys-gallery" });
+        });
+
+        const results = await Promise.all(uploadPromises);
+        const imageUrls = results.map(result => result.secure_url);
+
+        const insertPromises = imageUrls.map(url => {
+            return pool.query('INSERT INTO property_images (property_id, image_url) VALUES ($1, $2)', [id, url]);
+        });
+
+        await Promise.all(insertPromises);
+
+        res.status(201).json({ message: 'Images uploaded successfully' });
+    } catch (error) {
+        console.error('Gallery image upload error:', error);
+        res.status(500).json({ error: 'Image upload failed.' });
+    }
+});
+
+adminRouter.delete('/images/:imageId', async (req, res) => {
+    try {
+        const { imageId } = req.params;
+        // Optional: Delete from Cloudinary as well if needed
+        const { rowCount } = await pool.query('DELETE FROM property_images WHERE id = $1', [imageId]);
+        if (rowCount === 0) {
+            return res.status(404).json({ message: 'Image not found' });
+        }
+        res.json({ message: 'Image deleted successfully' });
+    } catch (error) {
+        console.error('Error deleting image:', error);
+        res.status(500).json({ error: 'Database query failed' });
+    }
+});
+
+
 app.use('/api/admin', adminRouter);
 
-// --- Image Upload Endpoint (also protected) ---
+// --- Image Upload Endpoint (for main image) ---
 app.post('/api/upload', verifyToken, upload.single('image'), async (req, res) => {
   try {
     if (!req.file) {
@@ -161,7 +210,7 @@ app.post('/api/upload', verifyToken, upload.single('image'), async (req, res) =>
 });
 
 // =================================================================
-// --- PUBLIC API ENDPOINTS (No login required) ---
+// --- PUBLIC API ENDPOINTS ---
 // =================================================================
 
 app.get('/api/properties', async (req, res) => {
@@ -176,21 +225,11 @@ app.get('/api/properties', async (req, res) => {
         const values = [];
         let counter = 1;
 
-        if (status && status !== '') {
-            conditions.push(`status = $${counter++}`);
-            values.push(status);
-        }
-        if (type && type !== '') {
-            conditions.push(`LOWER(title) LIKE $${counter++}`);
-            values.push(`%${type.toLowerCase()}%`);
-        }
-        if (keyword && keyword.trim() !== '') {
-            conditions.push(`LOWER(title) LIKE $${counter++}`);
-            values.push(`%${keyword.toLowerCase()}%`);
-        }
-        if (conditions.length > 0) {
-            baseQuery += ' WHERE ' + conditions.join(' AND ');
-        }
+        if (status && status !== '') { conditions.push(`status = $${counter++}`); values.push(status); }
+        if (type && type !== '') { conditions.push(`LOWER(title) LIKE $${counter++}`); values.push(`%${type.toLowerCase()}%`); }
+        if (keyword && keyword.trim() !== '') { conditions.push(`LOWER(title) LIKE $${counter++}`); values.push(`%${keyword.toLowerCase()}%`); }
+        
+        if (conditions.length > 0) { baseQuery += ' WHERE ' + conditions.join(' AND '); }
 
         const totalResult = await pool.query(`SELECT COUNT(*) ${baseQuery}`, values);
         const totalProperties = parseInt(totalResult.rows[0].count);
@@ -200,11 +239,7 @@ app.get('/api/properties', async (req, res) => {
         const dataValues = [...values, limit, offset];
         const { rows } = await pool.query(dataQuery, dataValues);
 
-        res.json({
-            properties: rows,
-            currentPage: page,
-            totalPages: totalPages
-        });
+        res.json({ properties: rows, currentPage: page, totalPages: totalPages });
     } catch (error) {
         console.error('Error fetching public properties:', error);
         res.status(500).json({ error: 'Database query failed' });
@@ -214,52 +249,38 @@ app.get('/api/properties', async (req, res) => {
 app.get('/api/properties/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        const { rows } = await pool.query('SELECT * FROM properties WHERE id = $1', [id]);
-        if (rows.length === 0) {
-            return res.status(404).json({ message: 'Property not found' });
-        }
-        res.json(rows[0]);
+        const propertyRes = await pool.query('SELECT * FROM properties WHERE id = $1', [id]);
+        if (propertyRes.rows.length === 0) return res.status(404).json({ message: 'Property not found' });
+
+        const imagesRes = await pool.query('SELECT id, image_url FROM property_images WHERE property_id = $1 ORDER BY created_at ASC', [id]);
+        
+        const property = propertyRes.rows[0];
+        property.images = imagesRes.rows;
+
+        res.json(property);
     } catch(error){
         console.error('Error fetching public single property:', error);
         res.status(500).json({ error: 'Database query failed' });
     }
 });
 
-// --- Contact Form Endpoint (with SendGrid) ---
 app.post('/api/contact', async (req, res) => {
     sgMail.setApiKey(process.env.SENDGRID_API_KEY);
-    
     try {
         const { name, email, phone, message } = req.body;
         if (!name || !email || !message) {
             return res.status(400).json({ error: 'Name, email, and message are required.' });
         }
-
         const msg = {
             to: process.env.SENDGRID_SENDER_EMAIL,
             from: process.env.SENDGRID_SENDER_EMAIL,
             subject: `New Message from ${name} via Website`,
-            html: `
-                <h2>New Contact Form Submission</h2>
-                <p><strong>Name:</strong> ${name}</p>
-                <p><strong>Reply-To:</strong> ${email}</p>
-                <p><strong>Phone:</strong> ${phone || 'Not provided'}</p>
-                <hr>
-                <p><strong>Message:</strong></p>
-                <p>${message}</p>
-            `,
+            html: `<p>Name: ${name}</p><p>Email: ${email}</p><p>Phone: ${phone || 'N/A'}</p><p>Message: ${message}</p>`,
         };
-
         await sgMail.send(msg);
-
-        console.log('Message sent via SendGrid');
         res.status(200).json({ success: true, message: 'Message sent successfully!' });
-
     } catch (error) {
-        console.error('SendGrid Error:', error);
-        if (error.response) {
-            console.error(error.response.body)
-        }
+        console.error('SendGrid Error:', error.response?.body);
         res.status(500).json({ error: 'Failed to send message.' });
     }
 });
