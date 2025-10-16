@@ -21,6 +21,9 @@ if (!process.env.FRONTEND_URL) {
 // Middlewares & Configs
 app.use(express.json());
 
+console.log("===================================");
+console.log("Reading FRONTEND_URL as:", process.env.FRONTEND_URL);
+
 const corsOptions = {
   origin: [
     'http://localhost:3000',
