@@ -8,9 +8,15 @@ import multer from 'multer';
 import { v2 as cloudinary } from 'cloudinary';
 import sgMail from '@sendgrid/mail';
 
+
 const { Pool } = pg;
 const app = express();
 const port = process.env.PORT || 10000;
+
+if (!process.env.FRONTEND_URL) {
+  console.error("FATAL ERROR: FRONTEND_URL is not defined in environment variables.");
+  process.exit(1); // สั่งให้เซิร์ฟเวอร์หยุดทำงานทันที
+}
 
 // Middlewares & Configs
 app.use(express.json());
