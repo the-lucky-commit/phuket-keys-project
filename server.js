@@ -18,12 +18,16 @@ app.use(express.json());
 // แทนที่ app.use(cors()); เดิมด้วยโค้ดนี้
 const corsOptions = {
   origin: [
-    'http://localhost:3000', // อนุญาตตอนเราทดสอบบนเครื่อง
-    process.env.FRONTEND_URL  // อนุญาตเว็บจริงที่อยู่บน Vercel
+    'http://localhost:3000',
+    process.env.FRONTEND_URL
   ],
+  methods: ['GET', 'POST', 'PUT', 'DELETE'], // <-- เพิ่มส่วนนี้ เพื่ออนุญาต POST
+  allowedHeaders: ['Content-Type', 'Authorization'], // <-- เพิ่มส่วนนี้ สำคัญมากสำหรับ Login
   optionsSuccessStatus: 200
 };
+
 app.use(cors(corsOptions));
+
 
 cloudinary.config({
   cloud_name: process.env.CLOUD_NAME,
