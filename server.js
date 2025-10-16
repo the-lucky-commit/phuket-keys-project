@@ -94,6 +94,25 @@ adminRouter.get('/stats', async (req, res) => {
     }
 });
 
+// เพิ่มโค้ดส่วนนี้เข้าไปใน server.js
+adminRouter.get('/properties-by-type', async (req, res) => {
+    try {
+        const query = `
+            SELECT
+                type,
+                COUNT(*) AS count
+            FROM properties
+            GROUP BY type
+            ORDER BY count DESC;
+        `;
+        const { rows } = await pool.query(query);
+        res.json(rows);
+    } catch (error) {
+        console.error('Error fetching properties by type:', error);
+        res.status(500).json({ error: 'Database query failed' });
+    }
+});
+
 adminRouter.get('/properties/:id', async (req, res) => {
     try {
         const { id } = req.params;
