@@ -115,9 +115,32 @@ adminRouter.get('/stats', async (req, res) => {
 
 adminRouter.get('/properties', async (req, res) => {
     try {
-        const query = 'SELECT id, main_image_url, title, status, price, created_at FROM properties ORDER BY created_at DESC';
-        const { rows } = await pool.query(query);
+        const { keyword, status } = req.query;
+
+        let baseQuery = 'SELECT id, main_image_url, title, status, price, created_at FROM properties';
+        const conditions = [];
+        const values = [];
+        let counter = 1;
+
+        if (keyword) {
+            conditions.push(`LOWER(title) LIKE $${counter++}`);
+            values.push(`%${keyword.toLowerCase()}%`);
+        }
+
+        if (status && (status === 'For Sale' || status === 'For Rent')) {
+            conditions.push(`status = $${counter++}`);
+            values.push(status);
+        }
+
+        if (conditions.length > 0) {
+            baseQuery += ' WHERE ' + conditions.join(' AND ');
+        }
+        
+        baseQuery += ' ORDER BY created_at DESC';
+
+        const { rows } = await pool.query(baseQuery, values);
         res.json(rows);
+
     } catch (error) {
         console.error('Error fetching admin properties list:', error);
         res.status(500).json({ error: 'Database query failed' });
