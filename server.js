@@ -296,47 +296,41 @@ app.post('/api/upload', verifyToken, upload.single('image'), async (req, res) =>
 
 app.get('/api/properties', async (req, res) => {
     try {
-        // --- 1. อ่านค่า page และ limit (กำหนดค่า default) ---
         const page = parseInt(req.query.page || '1');
-        const limit = parseInt(req.query.limit || '9');
+        const limit = parseInt(req.query.limit || '9'); 
         const offset = (page - 1) * limit;
         
-        const { status, keyword } = req.query; // รับ keyword กับ status มาเหมือนเดิม
+        const { status, keyword } = req.query;
 
         let baseQuery = 'FROM properties';
         const conditions = [];
-        const values: any[] = []; // ใช้ any[] เพื่อความยืดหยุ่น
+        // --- แก้ไขตรงนี้: ลบ ': any[]' ออก ---
+        const values = []; 
         let counter = 1;
 
-        // --- 2. สร้าง WHERE clause (เหมือนเดิม) ---
         if (status && status !== '') { 
             conditions.push(`status = $${counter++}`); 
             values.push(status); 
         }
-        // แก้ไข: ค้นหาทั้ง title และ description (ถ้าต้องการ)
         if (keyword && typeof keyword === 'string' && keyword.trim() !== '') { 
             const searchTerm = `%${keyword.toLowerCase()}%`;
             conditions.push(`(LOWER(title) LIKE $${counter++} OR LOWER(description) LIKE $${counter})`); 
-            values.push(searchTerm, searchTerm); // เพิ่ม searchTerm สองครั้ง
-            counter++; // เพิ่ม counter อีกครั้ง
+            values.push(searchTerm, searchTerm); 
+            counter++;
         }
         
         if (conditions.length > 0) { 
             baseQuery += ' WHERE ' + conditions.join(' AND '); 
         }
 
-        // --- 3. Query เพื่อนับจำนวนทั้งหมด (Total Count) ---
         const totalResult = await pool.query(`SELECT COUNT(*) ${baseQuery}`, values);
         const totalProperties = parseInt(totalResult.rows[0].count);
         const totalPages = Math.ceil(totalProperties / limit);
         
-        // --- 4. Query เพื่อดึงข้อมูลเฉพาะหน้าปัจจุบัน ---
-        // เพิ่ม LIMIT และ OFFSET เข้าไปใน values array ทีหลัง
         const dataQuery = `SELECT * ${baseQuery} ORDER BY created_at DESC LIMIT $${counter++} OFFSET $${counter++}`;
         const dataValues = [...values, limit, offset];
         const { rows } = await pool.query(dataQuery, dataValues);
 
-        // --- 5. ส่งข้อมูลพร้อม pagination info กลับไป ---
         res.json({ 
             properties: rows, 
             currentPage: page, 
