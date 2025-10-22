@@ -324,14 +324,14 @@ app.get('/api/properties', async (req, res) => {
             conditions.push(`type = $${counter++}`);
             values.push(type);
         }
-        if (minPrice && !isNaN(parseFloat(minPrice as string))) { // เพิ่มเงื่อนไข minPrice
-             conditions.push(`price >= $${counter++}`);
-             values.push(parseFloat(minPrice as string));
-        }
-        if (maxPrice && !isNaN(parseFloat(maxPrice as string))) { // เพิ่มเงื่อนไข maxPrice
-             conditions.push(`price <= $${counter++}`);
-             values.push(parseFloat(maxPrice as string));
-        }
+        if (minPrice && !isNaN(parseFloat(minPrice))) { // ลบ as string ตรงนี้
+        conditions.push(`price >= $${counter++}`);
+        values.push(parseFloat(minPrice)); // ลบ as string ตรงนี้
+}
+        if (maxPrice && !isNaN(parseFloat(maxPrice))) { // ลบ as string ตรงนี้
+        conditions.push(`price <= $${counter++}`);
+        values.push(parseFloat(maxPrice)); // ลบ as string ตรงนี้
+}
 
         if (conditions.length > 0) {
             baseQuery += ' WHERE ' + conditions.join(' AND ');
