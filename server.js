@@ -297,44 +297,59 @@ app.post('/api/upload', verifyToken, upload.single('image'), async (req, res) =>
 app.get('/api/properties', async (req, res) => {
     try {
         const page = parseInt(req.query.page || '1');
-        const limit = parseInt(req.query.limit || '9'); 
+        const limit = parseInt(req.query.limit || '9');
         const offset = (page - 1) * limit;
-        
-        const { status, keyword } = req.query;
+
+        // --- 1. อ่านค่า Filter ใหม่ ---
+        const { status, keyword, type, minPrice, maxPrice } = req.query;
 
         let baseQuery = 'FROM properties';
         const conditions = [];
-        // --- แก้ไขตรงนี้: ลบ ': any[]' ออก ---
-        const values = []; 
+        const values = [];
         let counter = 1;
 
-        if (status && status !== '') { 
-            conditions.push(`status = $${counter++}`); 
-            values.push(status); 
+        // --- 2. สร้าง WHERE clause (เพิ่มเงื่อนไข type, minPrice, maxPrice) ---
+        if (status && status !== '') {
+            conditions.push(`status = $${counter++}`);
+            values.push(status);
         }
-        if (keyword && typeof keyword === 'string' && keyword.trim() !== '') { 
+        if (keyword && typeof keyword === 'string' && keyword.trim() !== '') {
             const searchTerm = `%${keyword.toLowerCase()}%`;
-            conditions.push(`(LOWER(title) LIKE $${counter++} OR LOWER(description) LIKE $${counter})`); 
-            values.push(searchTerm, searchTerm); 
-            counter++;
+            // ค้นหาทั้ง title และ description (ถ้าต้องการ)
+            conditions.push(`(LOWER(title) LIKE $${counter} OR LOWER(description) LIKE $${counter})`);
+            values.push(searchTerm);
+            counter++; // เพิ่ม counter แค่ครั้งเดียวพอ เพราะ parameter index เหมือนกัน
         }
-        
-        if (conditions.length > 0) { 
-            baseQuery += ' WHERE ' + conditions.join(' AND '); 
+        if (type && typeof type === 'string' && type.trim() !== '' && type !== 'All') { // เพิ่มเงื่อนไข type
+            conditions.push(`type = $${counter++}`);
+            values.push(type);
+        }
+        if (minPrice && !isNaN(parseFloat(minPrice as string))) { // เพิ่มเงื่อนไข minPrice
+             conditions.push(`price >= $${counter++}`);
+             values.push(parseFloat(minPrice as string));
+        }
+        if (maxPrice && !isNaN(parseFloat(maxPrice as string))) { // เพิ่มเงื่อนไข maxPrice
+             conditions.push(`price <= $${counter++}`);
+             values.push(parseFloat(maxPrice as string));
         }
 
+        if (conditions.length > 0) {
+            baseQuery += ' WHERE ' + conditions.join(' AND ');
+        }
+
+        // --- ส่วนที่เหลือเหมือนเดิม (นับ Total, ดึงข้อมูล, ส่ง Response) ---
         const totalResult = await pool.query(`SELECT COUNT(*) ${baseQuery}`, values);
         const totalProperties = parseInt(totalResult.rows[0].count);
         const totalPages = Math.ceil(totalProperties / limit);
-        
+
         const dataQuery = `SELECT * ${baseQuery} ORDER BY created_at DESC LIMIT $${counter++} OFFSET $${counter++}`;
         const dataValues = [...values, limit, offset];
         const { rows } = await pool.query(dataQuery, dataValues);
 
-        res.json({ 
-            properties: rows, 
-            currentPage: page, 
-            totalPages: totalPages 
+        res.json({
+            properties: rows,
+            currentPage: page,
+            totalPages: totalPages
         });
 
     } catch (error) {
