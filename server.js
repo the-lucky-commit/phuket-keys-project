@@ -297,8 +297,8 @@ app.post('/api/upload', verifyToken, upload.single('image'), async (req, res) =>
 app.get('/api/properties', async (req, res) => {
     try {
         // --- 1. อ่านค่า page และ limit (กำหนดค่า default) ---
-        const page = parseInt(req.query.page as string || '1');
-        const limit = parseInt(req.query.limit as string || '9'); // Default 9 items per page
+        const page = parseInt(req.query.page || '1');
+        const limit = parseInt(req.query.limit || '9');
         const offset = (page - 1) * limit;
         
         const { status, keyword } = req.query; // รับ keyword กับ status มาเหมือนเดิม
