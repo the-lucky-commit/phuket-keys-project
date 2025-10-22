@@ -292,33 +292,57 @@ app.post('/api/upload', verifyToken, upload.single('image'), async (req, res) =>
 // --- PUBLIC API ENDPOINTS ---
 // =================================================================
 
+// ในไฟล์ server.js, แทนที่ app.get('/api/properties', ...) เดิมด้วยโค้ดนี้
+
 app.get('/api/properties', async (req, res) => {
     try {
-        const page = parseInt(req.query.page || '1');
-        const limit = parseInt(req.query.limit || '9');
+        // --- 1. อ่านค่า page และ limit (กำหนดค่า default) ---
+        const page = parseInt(req.query.page as string || '1');
+        const limit = parseInt(req.query.limit as string || '9'); // Default 9 items per page
         const offset = (page - 1) * limit;
-        const { status, type, keyword } = req.query;
+        
+        const { status, keyword } = req.query; // รับ keyword กับ status มาเหมือนเดิม
 
         let baseQuery = 'FROM properties';
         const conditions = [];
-        const values = [];
+        const values: any[] = []; // ใช้ any[] เพื่อความยืดหยุ่น
         let counter = 1;
 
-        if (status && status !== '') { conditions.push(`status = $${counter++}`); values.push(status); }
-        if (type && type !== '') { conditions.push(`LOWER(title) LIKE $${counter++}`); values.push(`%${type.toLowerCase()}%`); }
-        if (keyword && keyword.trim() !== '') { conditions.push(`LOWER(title) LIKE $${counter++}`); values.push(`%${keyword.toLowerCase()}%`); }
+        // --- 2. สร้าง WHERE clause (เหมือนเดิม) ---
+        if (status && status !== '') { 
+            conditions.push(`status = $${counter++}`); 
+            values.push(status); 
+        }
+        // แก้ไข: ค้นหาทั้ง title และ description (ถ้าต้องการ)
+        if (keyword && typeof keyword === 'string' && keyword.trim() !== '') { 
+            const searchTerm = `%${keyword.toLowerCase()}%`;
+            conditions.push(`(LOWER(title) LIKE $${counter++} OR LOWER(description) LIKE $${counter})`); 
+            values.push(searchTerm, searchTerm); // เพิ่ม searchTerm สองครั้ง
+            counter++; // เพิ่ม counter อีกครั้ง
+        }
         
-        if (conditions.length > 0) { baseQuery += ' WHERE ' + conditions.join(' AND '); }
+        if (conditions.length > 0) { 
+            baseQuery += ' WHERE ' + conditions.join(' AND '); 
+        }
 
+        // --- 3. Query เพื่อนับจำนวนทั้งหมด (Total Count) ---
         const totalResult = await pool.query(`SELECT COUNT(*) ${baseQuery}`, values);
         const totalProperties = parseInt(totalResult.rows[0].count);
         const totalPages = Math.ceil(totalProperties / limit);
         
+        // --- 4. Query เพื่อดึงข้อมูลเฉพาะหน้าปัจจุบัน ---
+        // เพิ่ม LIMIT และ OFFSET เข้าไปใน values array ทีหลัง
         const dataQuery = `SELECT * ${baseQuery} ORDER BY created_at DESC LIMIT $${counter++} OFFSET $${counter++}`;
         const dataValues = [...values, limit, offset];
         const { rows } = await pool.query(dataQuery, dataValues);
 
-        res.json({ properties: rows, currentPage: page, totalPages: totalPages });
+        // --- 5. ส่งข้อมูลพร้อม pagination info กลับไป ---
+        res.json({ 
+            properties: rows, 
+            currentPage: page, 
+            totalPages: totalPages 
+        });
+
     } catch (error) {
         console.error('Error fetching public properties:', error);
         res.status(500).json({ error: 'Database query failed' });
