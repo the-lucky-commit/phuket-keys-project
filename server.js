@@ -358,6 +358,22 @@ app.get('/api/properties', async (req, res) => {
     }
 });
 
+app.get('/api/properties/featured', async (req, res) => {
+    try {
+        const limit = 4; // กำหนดจำนวนรายการที่จะดึง (เช่น 4)
+        const query = `
+            SELECT * FROM properties 
+            ORDER BY created_at DESC 
+            LIMIT $1
+        `;
+        const { rows } = await pool.query(query, [limit]);
+        res.json(rows); // ส่งกลับเป็น Array ของ properties เลย
+    } catch (error) {
+        console.error('Error fetching featured properties:', error);
+        res.status(500).json({ error: 'Database query failed' });
+    }
+});
+
 app.get('/api/properties/:id', async (req, res) => {
     try {
         const { id } = req.params;
