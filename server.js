@@ -250,7 +250,7 @@ adminRouter.post('/properties/:id/images', upload.array('images', 5), async (req
         console.error('Gallery image upload error:', error);
         res.status(500).json({ error: 'Image upload failed.' });
     }
-});
+}); 
 
 adminRouter.delete('/images/:imageId', async (req, res) => {
     try {
@@ -266,7 +266,6 @@ adminRouter.delete('/images/:imageId', async (req, res) => {
         res.status(500).json({ error: 'Database query failed' });
     }
 });
-
 
 app.use('/api/admin', adminRouter);
 
