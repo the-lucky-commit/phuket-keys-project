@@ -8,6 +8,26 @@ import multer from 'multer';
 import { v2 as cloudinary } from 'cloudinary';
 import sgMail from '@sendgrid/mail';
 
+const REQUIRED_ENV_VARS = [
+  'DATABASE_URL',
+  'FRONTEND_URL',
+  'JWT_SECRET',
+  'CLOUD_NAME',
+  'API_KEY',
+  'API_SECRET',
+  'SENDGRID_API_KEY',
+  'SENDGRID_SENDER_EMAIL'
+];
+
+const missingVars = REQUIRED_ENV_VARS.filter(varName => !process.env[varName]);
+
+if (missingVars.length > 0) {
+  console.error('====================================================');
+  console.error('FATAL ERROR: Missing required environment variables:');
+  console.error(missingVars.join('\n'));
+  console.error('====================================================');
+  process.exit(1); // สั่งให้เซิร์ฟเวอร์หยุดทำงานทันที
+}
 
 const { Pool } = pg;
 const app = express();
@@ -184,11 +204,17 @@ adminRouter.get('/properties/:id', async (req, res) => {
     }
 });
 
+// POST (Create new property)
 adminRouter.post('/properties', async (req, res) => {
     try {
-        const { title, status, price, main_image_url, price_period, bedrooms, bathrooms, area_sqm, description } = req.body;
-        const sql = `INSERT INTO properties (title, status, price, main_image_url, price_period, bedrooms, bathrooms, area_sqm, description) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`;
-        const { rows } = await pool.query(sql, [title, status, price, main_image_url, price_period, bedrooms, bathrooms, area_sqm, description]);
+        // --- ⬇️ [แก้ไข] เพิ่ม main_image_public_id จาก req.body ---
+        const { title, status, price, main_image_url, main_image_public_id, price_period, bedrooms, bathrooms, area_sqm, description } = req.body;
+        const sql = `INSERT INTO properties (title, status, price, main_image_url, main_image_public_id, price_period, bedrooms, bathrooms, area_sqm, description) 
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`;
+        const values = [title, status, price, main_image_url, main_image_public_id, price_period, bedrooms, bathrooms, area_sqm, description];
+        // --- ⬆️ [แก้ไข] ---
+
+        const { rows } = await pool.query(sql, values);
         res.status(201).json({ message: 'Property created successfully', id: rows[0].id });
     } catch (error) {
         console.error('Error creating property:', error);
@@ -196,14 +222,50 @@ adminRouter.post('/properties', async (req, res) => {
     }
 });
 
+// PUT (Update property by id)
 adminRouter.put('/properties/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        const { title, status, price, main_image_url, price_period, bedrooms, bathrooms, area_sqm, description } = req.body;
-        const sql = `UPDATE properties SET title = $1, status = $2, price = $3, main_image_url = $4, price_period = $5, bedrooms = $6, bathrooms = $7, area_sqm = $8, description = $9 WHERE id = $10`;
-        const { rowCount } = await pool.query(sql, [title, status, price, main_image_url, price_period, bedrooms, bathrooms, area_sqm, description, id]);
-        if (rowCount === 0) return res.status(404).json({ message: 'Property not found' });
+
+        // --- ⬇️ [แก้ไข] รับ 'old_main_image_public_id' เพิ่ม ---
+        const { 
+            title, status, price, main_image_url, main_image_public_id, 
+            price_period, bedrooms, bathrooms, area_sqm, description,
+            old_main_image_public_id // ⭐️ รับค่าใหม่นี้จาก Frontend
+        } = req.body;
+
+        const sql = `UPDATE properties SET 
+                        title = $1, status = $2, price = $3, main_image_url = $4, main_image_public_id = $5, 
+                        price_period = $6, bedrooms = $7, bathrooms = $8, area_sqm = $9, description = $10 
+                     WHERE id = $11`;
+        const values = [
+            title, status, price, main_image_url, main_image_public_id, 
+            price_period, bedrooms, bathrooms, area_sqm, description, id
+        ];
+        // --- ⬆️ [แก้ไข] ---
+
+        // 1. อัปเดตฐานข้อมูล
+        const { rowCount } = await pool.query(sql, values);
+        if (rowCount === 0) {
+            return res.status(404).json({ message: 'Property not found' });
+        }
+
+        // --- ⬇️ [เพิ่ม] Logic การลบรูปเก่าออกจาก Cloudinary ---
+        // 2. ถ้ามีการส่ง 'old_main_image_public_id' มา (แปลว่ามีการเปลี่ยนรูป) ให้ลบไฟล์เก่าทิ้ง
+        if (old_main_image_public_id) {
+            try {
+                console.log(`Deleting old main image: ${old_main_image_public_id}`);
+                await cloudinary.uploader.destroy(old_main_image_public_id);
+            } catch (cldError) {
+                // ไม่ต้องหยุดการทำงานหลัก แค่ log error ไว้
+                // เพราะ DB อัปเดตสำเร็จแล้ว (รูปใหม่อยู่ในระบบแล้ว)
+                console.warn('Cloudinary destroy error (old image may be deleted):', cldError.message);
+            }
+        }
+        // --- ⬆️ [เพิ่ม] ---
+
         res.json({ message: 'Property updated successfully' });
+
     } catch (error) {
         console.error('Error updating property:', error);
         res.status(500).json({ error: 'Database query failed' });
@@ -211,14 +273,60 @@ adminRouter.put('/properties/:id', async (req, res) => {
 });
 
 adminRouter.delete('/properties/:id', async (req, res) => {
+    // --- ⬇️ [แก้ไข] ใช้ Transaction ---
+    const client = await pool.connect(); // ยืม connection มาจัดการ Transaction
     try {
         const { id } = req.params;
-        const { rowCount } = await pool.query('DELETE FROM properties WHERE id = $1', [id]);
-        if (rowCount === 0) return res.status(404).json({ message: 'Property not found' });
-        res.json({ message: 'Property deleted successfully' });
+
+        await client.query('BEGIN'); // เริ่ม Transaction
+
+        // 1. ดึง Public ID ของ Gallery ทั้งหมด ที่เกี่ยวข้องกับ property นี้
+        const galleryImagesRes = await client.query('SELECT public_id FROM property_images WHERE property_id = $1', [id]);
+        const galleryPublicIds = galleryImagesRes.rows
+            .map(img => img.public_id)
+            .filter(Boolean); // .filter(Boolean) คือการกรองค่า null หรือ "" ออกไป
+
+        // 2. ดึง Public ID ของรูปหลัก
+        const propertyRes = await client.query('SELECT main_image_public_id FROM properties WHERE id = $1', [id]);
+
+        if (propertyRes.rows.length === 0) {
+            await client.query('ROLLBACK'); // ย้อนกลับ Transaction
+            return res.status(404).json({ message: 'Property not found' });
+        }
+
+        const mainPublicId = propertyRes.rows[0].main_image_public_id;
+
+        // 3. ลบ Gallery Images ออกจาก Cloudinary
+        if (galleryPublicIds.length > 0) {
+            // .api.delete_resources() ใช้ลบทีเดียวหลายไฟล์ (เร็วกว่า)
+            await cloudinary.api.delete_resources(galleryPublicIds);
+        }
+
+        // 4. ลบ Main Image ออกจาก Cloudinary
+        if (mainPublicId) {
+            await cloudinary.uploader.destroy(mainPublicId);
+        }
+
+        // 5. ลบข้อมูลออกจาก Database
+        // **คำเตือน:** โค้ดนี้จะทำงานได้ถูกต้อง
+        // หากคุณตั้งค่า Foreign Key ของตาราง `property_images` (คอลัมน์ `property_id`)
+        // ให้เป็น "ON DELETE CASCADE"
+        // (ถ้าไม่ได้ตั้ง คุณต้องรัน DELETE FROM property_images... ก่อนบรรทัดนี้)
+
+        // สมมติว่าตั้ง Cascade ไว้:
+        await client.query('DELETE FROM properties WHERE id = $1', [id]);
+
+        await client.query('COMMIT'); // ยืนยัน Transaction (ทุกอย่างสำเร็จ)
+        // --- ⬆️ [แก้ไข] ---
+
+        res.json({ message: 'Property and all associated images deleted successfully' });
+
     } catch (error) {
+        await client.query('ROLLBACK'); // ย้อนกลับหากมีปัญหา
         console.error('Error deleting property:', error);
         res.status(500).json({ error: 'Database query failed' });
+    } finally {
+        client.release(); // คืน connection กลับเข้า pool
     }
 });
 
@@ -237,11 +345,17 @@ adminRouter.post('/properties/:id/images', upload.array('images', 5), async (req
         });
 
         const results = await Promise.all(uploadPromises);
-        const imageUrls = results.map(result => result.secure_url);
 
-        const insertPromises = imageUrls.map(url => {
-            return pool.query('INSERT INTO property_images (property_id, image_url) VALUES ($1, $2)', [id, url]);
+        // --- ⬇️ [แก้ไข] เราจะ map 'results' โดยตรง ---
+        // ไม่ต้องใช้ imageUrls.map แล้ว
+        const insertPromises = results.map(result => {
+            // เพิ่ม public_id เข้าไปในคำสั่ง INSERT
+            return pool.query(
+                'INSERT INTO property_images (property_id, image_url, public_id) VALUES ($1, $2, $3)', 
+                [id, result.secure_url, result.public_id] // <-- เพิ่ม result.public_id
+            );
         });
+        // --- ⬆️ [แก้ไข] ---
 
         await Promise.all(insertPromises);
 
@@ -255,11 +369,34 @@ adminRouter.post('/properties/:id/images', upload.array('images', 5), async (req
 adminRouter.delete('/images/:imageId', async (req, res) => {
     try {
         const { imageId } = req.params;
-        // Optional: Delete from Cloudinary as well if needed
-        const { rowCount } = await pool.query('DELETE FROM property_images WHERE id = $1', [imageId]);
-        if (rowCount === 0) {
-            return res.status(404).json({ message: 'Image not found' });
+
+        // --- ⬇️ [แก้ไข] เพิ่มส่วนลบจาก Cloudinary ---
+
+        // 1. ดึง public_id ออกมาจาก DB ก่อน
+        const { rows } = await pool.query('SELECT public_id FROM property_images WHERE id = $1', [imageId]);
+
+        if (rows.length === 0) {
+            return res.status(404).json({ message: 'Image not found in database' });
         }
+
+        const publicId = rows[0].public_id;
+
+        // 2. สั่งลบจาก Cloudinary (ถ้ามี publicId)
+        if (publicId) {
+            try {
+                // ใช้ .destroy() สำหรับลบไฟล์เดียว
+                await cloudinary.uploader.destroy(publicId);
+            } catch (cldError) {
+                // ถ้าลบใน Cloudinary ไม่ได้ ก็ไม่เป็นไร (อาจจะเคยลบไปแล้ว)
+                // เราจะ log error ไว้ แต่ปล่อยให้โค้ดทำงานต่อ (ลบใน DB)
+                console.warn('Cloudinary destroy error (image may already be deleted):', cldError.message);
+            }
+        }
+
+        // 3. ลบจาก DB (เหมือนเดิม)
+        await pool.query('DELETE FROM property_images WHERE id = $1', [imageId]);
+        // --- ⬆️ [แก้ไข] ---
+
         res.json({ message: 'Image deleted successfully' });
     } catch (error) {
         console.error('Error deleting image:', error);
@@ -280,7 +417,14 @@ app.post('/api/upload', verifyToken, upload.single('image'), async (req, res) =>
     const result = await cloudinary.uploader.upload(dataURI, {
       folder: "phuket-keys"
     });
-    res.status(200).json({ imageUrl: result.secure_url });
+
+    // --- ⬇️ [แก้ไข] ส่งกลับ 2 ค่า ---
+    res.status(200).json({ 
+      imageUrl: result.secure_url, 
+      publicId: result.public_id   // <-- เพิ่มค่านี้เข้าไป
+    });
+    // --- ⬆️ [แก้ไข] ---
+
   } catch (error) {
     console.error('Image upload error:', error);
     res.status(500).json({ error: 'Image upload failed.' });
