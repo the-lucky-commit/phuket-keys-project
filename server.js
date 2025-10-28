@@ -128,13 +128,22 @@ adminRouter.get('/amenities', async (req, res) => {
     }
 });
 
+// [ 🔄 แทนที่ฟังก์ชันนี้ 🔄 ]
 adminRouter.get('/stats', async (req, res) => {
     try {
+        // ⭐️ 1. อัปเดต SQL query
         const statsQuery = `
             SELECT
                 COUNT(*) AS total_properties,
                 SUM(CASE WHEN status = 'For Sale' THEN 1 ELSE 0 END) AS for_sale,
-                SUM(CASE WHEN status = 'For Rent' THEN 1 ELSE 0 END) AS for_rent
+                SUM(CASE WHEN status = 'For Rent' THEN 1 ELSE 0 END) AS for_rent,
+
+                -- ⭐️ 2. เพิ่มการนับ 'availability' (ที่ลูกค้าต้องการ)
+                SUM(CASE WHEN availability = 'Available' THEN 1 ELSE 0 END) AS available,
+                SUM(CASE WHEN availability = 'Reserved' THEN 1 ELSE 0 END) AS reserved,
+
+                -- ⭐️ 3. (Bonus) นับ "เช่ารายวัน" ที่เราเพิ่งเพิ่ม
+                SUM(CASE WHEN status = 'For Rent (Daily)' THEN 1 ELSE 0 END) AS for_rent_daily
             FROM properties;
         `;
         const { rows } = await pool.query(statsQuery);
@@ -237,16 +246,19 @@ adminRouter.post('/properties', async (req, res) => {
     const client = await pool.connect();
     try {
         await client.query('BEGIN'); // ⭐️ 2. เริ่ม Transaction
+        await client.query('BEGIN'); 
 
-        // 3. ดึงข้อมูล property หลัก และ array 'amenities' (ที่เป็น ID)
-        const { title, status, price, main_image_url, main_image_public_id, price_period, bedrooms, bathrooms, area_sqm, description, amenities } = req.body;
-        
-        // 4. บันทึกลงตาราง 'properties'
-        const sql = `INSERT INTO properties (title, status, price, main_image_url, main_image_public_id, price_period, bedrooms, bathrooms, area_sqm, description) 
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`;
-        const values = [title, status, price, main_image_url, main_image_public_id, price_period, bedrooms, bathrooms, area_sqm, description];
-        
-        const { rows } = await client.query(sql, values);
+    // 1. ⬇️ [เพิ่ม 'availability'] ⬇️
+    const { title, status, price, main_image_url, main_image_public_id, price_period, bedrooms, bathrooms, area_sqm, description, amenities, availability } = req.body;
+
+    // 2. ⬇️ [เพิ่ม 'availability' (ตัวที่ 11) และ $11] ⬇️
+    const sql = `INSERT INTO properties (title, status, price, main_image_url, main_image_public_id, price_period, bedrooms, bathrooms, area_sqm, description, availability) 
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`;
+
+    // 3. ⬇️ [เพิ่ม 'availability' (ตัวที่ 11)] ⬇️
+    const values = [title, status, price, main_image_url, main_image_public_id, price_period, bedrooms, bathrooms, area_sqm, description, availability || 'Available']; // ⭐️ (ถ้าไม่ส่งมา ให้เป็น 'Available')
+
+    const { rows } = await client.query(sql, values);
         const newPropertyId = rows[0].id; // ⭐️ 5. เอา ID ของ Property ที่เพิ่งสร้าง
 
         // 6. บันทึกลงตาราง 'property_amenities' (ถ้ามี)
@@ -278,28 +290,34 @@ adminRouter.put('/properties/:id', async (req, res) => {
     // ⭐️ 1. ใช้ client สำหรับ Transaction
     const client = await pool.connect();
     try {
-        await client.query('BEGIN'); // ⭐️ 2. เริ่ม Transaction
-        const { id } = req.params;
-        
-        // 3. ดึงข้อมูลทั้งหมด รวมถึง 'amenities'
-        const { 
-            title, status, price, main_image_url, main_image_public_id, 
-            price_period, bedrooms, bathrooms, area_sqm, description,
-            old_main_image_public_id,
-            amenities // ⭐️ รับ Array ID ของ Amenities ใหม่
-        } = req.body;
-        
-        // 4. อัปเดตตาราง 'properties'
-        const sql = `UPDATE properties SET 
-                        title = $1, status = $2, price = $3, main_image_url = $4, main_image_public_id = $5, 
-                        price_period = $6, bedrooms = $7, bathrooms = $8, area_sqm = $9, description = $10 
-                     WHERE id = $11`;
-        const values = [
-            title, status, price, main_image_url, main_image_public_id, 
-            price_period, bedrooms, bathrooms, area_sqm, description, id
-        ];
-        
-        const { rowCount } = await client.query(sql, values);
+    await client.query('BEGIN'); 
+    const { id } = req.params;
+
+    // 1. ⬇️ [เพิ่ม 'availability'] ⬇️
+    const { 
+        title, status, price, main_image_url, main_image_public_id, 
+        price_period, bedrooms, bathrooms, area_sqm, description,
+        old_main_image_public_id,
+        amenities,
+        availability // ⭐️ รับค่าใหม่นี้
+    } = req.body;
+
+    // 2. ⬇️ [เพิ่ม 'availability = $11'] ⬇️
+    const sql = `UPDATE properties SET 
+                    title = $1, status = $2, price = $3, main_image_url = $4, main_image_public_id = $5, 
+                    price_period = $6, bedrooms = $7, bathrooms = $8, area_sqm = $9, description = $10,
+                    availability = $11 
+                 WHERE id = $12`; // ⭐️ (แก้ WHERE เป็น $12)
+
+    // 3. ⬇️ [เพิ่ม 'availability' (ตัวที่ 11) และแก้ id เป็น $12] ⬇️
+    const values = [
+        title, status, price, main_image_url, main_image_public_id, 
+        price_period, bedrooms, bathrooms, area_sqm, description, 
+        availability || 'Available', // ⭐️ (ถ้าไม่ส่งมา ให้เป็น 'Available')
+        id
+    ];
+
+    const { rowCount } = await client.query(sql, values);
         if (rowCount === 0) {
             await client.query('ROLLBACK');
             return res.status(404).json({ message: 'Property not found' });
@@ -589,6 +607,7 @@ app.get('/api/properties/featured', async (req, res) => {
 app.get('/api/properties/:id', async (req, res) => {
     try {
         const { id } = req.params;
+        pool.query('UPDATE properties SET view_count = view_count + 1 WHERE id = $1', [id]);
         const propertyRes = await pool.query('SELECT * FROM properties WHERE id = $1', [id]);
         if (propertyRes.rows.length === 0) return res.status(404).json({ message: 'Property not found' });
 
@@ -637,6 +656,35 @@ app.post('/api/contact', async (req, res) => {
         res.status(500).json({ error: 'Failed to send message.' });
     }
 });
+
+// --- ⬇️ [เพิ่มโค้ดนี้] ⬇️ ---
+// API สำหรับบันทึก Log การค้นหา (Public)
+app.post('/api/log-search', async (req, res) => {
+  try {
+    const { status, type, minPrice, maxPrice, keyword } = req.body;
+
+    // แปลงค่าว่าง (empty string) หรือ undefined เป็น null
+    const statusToLog = status || null;
+    const typeToLog = type || null;
+    const minPriceToLog = minPrice || null;
+    const maxPriceToLog = maxPrice || null;
+    const keywordToLog = keyword || null;
+
+    const sql = `INSERT INTO search_logs (status, type, min_price, max_price, keyword)
+                 VALUES ($1, $2, $3, $4, $5)`;
+
+    await pool.query(sql, [statusToLog, typeToLog, minPriceToLog, maxPriceToLog, keywordToLog]);
+
+    // ตอบกลับทันที (fire-and-forget)
+    res.status(200).json({ success: true });
+
+  } catch (error) {
+    console.error('Error logging search:', error);
+    // ถ้าการ log พัง ก็ไม่เป็นไร ไม่ต้องแจ้ง User
+    res.status(500).json({ success: false }); 
+  }
+});
+// --- ⬆️ [สิ้นสุดการเพิ่ม] ⬆️ ---
 
 // =================================================================
 // --- SERVER START ---
