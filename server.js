@@ -568,6 +568,53 @@ adminRouter.delete('/properties/:id', async (req, res) => {
     }
 });
 
+// --- ⬇️ [เพิ่ม API ใหม่นี้] ⬇️ ---
+// POST: บันทึก Transaction (ปิดการขาย/เช่า)
+adminRouter.post('/properties/:id/close-deal', async (req, res) => {
+    // ⭐️ 1. ใช้ Transaction
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN'); // ⭐️ 2. เริ่ม Transaction
+        const { id } = req.params; // ID ของ Property
+
+        // 3. รับข้อมูลจาก Admin
+        const { transaction_type, final_price, user_id } = req.body; 
+
+        // 4. ตรวจสอบ Input
+        if (!transaction_type || !final_price || (transaction_type !== 'Sold' && transaction_type !== 'Rented')) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ error: 'Invalid transaction type or final price' });
+        }
+
+        // 5. บันทึกลงตาราง 'transactions'
+        const transactionSql = `
+            INSERT INTO transactions (property_id, user_id, transaction_type, final_price)
+            VALUES ($1, $2, $3, $4)
+        `;
+        // (ถ้าไม่มี user_id ส่งมา ให้เป็น null)
+        await client.query(transactionSql, [id, user_id || null, transaction_type, final_price]);
+
+        // 6. ⭐️ อัปเดตสถานะ 'availability' ในตาราง 'properties'
+        //    (ถ้าขายแล้ว -> Sold, ถ้าเช่าแล้ว -> Rented)
+        const newAvailability = (transaction_type === 'Sold') ? 'Sold' : 'Rented';
+        const updatePropertySql = `
+            UPDATE properties SET availability = $1 WHERE id = $2
+        `;
+        await client.query(updatePropertySql, [newAvailability, id]);
+
+        await client.query('COMMIT'); // ⭐️ 7. ยืนยัน Transaction
+        res.status(201).json({ message: 'Transaction recorded and property status updated' });
+
+    } catch (error) {
+        await client.query('ROLLBACK'); // ⭐️ 8. ยกเลิกถ้าพลาด
+        console.error('Error closing deal:', error);
+        res.status(500).json({ error: 'Database query failed' });
+    } finally {
+        client.release(); // ⭐️ 9. คืน Connection
+    }
+});
+// --- ⬆️ [สิ้นสุดการเพิ่ม] ⬆️ ---
+
 adminRouter.post('/properties/:id/images', upload.array('images', 5), async (req, res) => {
     try {
         const { id } = req.params;
