@@ -310,7 +310,7 @@ adminRouter.get('/properties', async (req, res) => {
     try {
         const { keyword, status } = req.query;
 
-        let baseQuery = 'SELECT id, main_image_url, title, status, price, created_at, availability FROM properties'; 
+        let baseQuery = 'SELECT id, main_image_url, title, status, price, created_at, availability, view_count FROM properties'; // ⭐️ เพิ่ม , view_count
         const conditions = [];
         const values = [];
         let counter = 1;
