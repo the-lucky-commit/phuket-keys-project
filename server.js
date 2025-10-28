@@ -116,6 +116,18 @@ const verifyToken = (req, res, next) => {
 const adminRouter = express.Router();
 adminRouter.use(verifyToken);
 
+// [ ⬇️ เพิ่มโค้ดนี้ ⬇️ ]
+// ดึงรายการ Amenities ทั้งหมดสำหรับหน้า Admin
+adminRouter.get('/amenities', async (req, res) => {
+    try {
+        const { rows } = await pool.query('SELECT * FROM amenities ORDER BY name ASC');
+        res.json(rows);
+    } catch (error) {
+        console.error('Error fetching amenities:', error);
+        res.status(500).json({ error: 'Database query failed' });
+    }
+});
+
 adminRouter.get('/stats', async (req, res) => {
     try {
         const statsQuery = `
@@ -186,6 +198,7 @@ adminRouter.get('/properties-by-type', async (req, res) => {
     }
 });
 
+// [ 🔄 แทนที่ฟังก์ชันนี้ 🔄 ]
 adminRouter.get('/properties/:id', async (req, res) => {
     try {
         const { id } = req.params;
@@ -194,8 +207,21 @@ adminRouter.get('/properties/:id', async (req, res) => {
         
         const imagesRes = await pool.query('SELECT id, image_url FROM property_images WHERE property_id = $1 ORDER BY created_at ASC', [id]);
         
+        // --- [ ⬇️ เพิ่มส่วนนี้ ⬇️ ] ---
+        // ดึง Amenities ที่ผูกกับ Property นี้
+        const amenitiesQuery = `
+            SELECT a.id, a.name, a.icon 
+            FROM amenities a
+            JOIN property_amenities pa ON a.id = pa.amenity_id
+            WHERE pa.property_id = $1
+            ORDER BY a.name;
+        `;
+        const amenitiesRes = await pool.query(amenitiesQuery, [id]);
+        // --- [ ⬆️ สิ้นสุดส่วนที่เพิ่ม ⬆️ ] ---
+
         const property = propertyRes.rows[0];
         property.images = imagesRes.rows;
+        property.amenities = amenitiesRes.rows; // ⭐️ ผูกข้อมูล Amenities เข้าไปด้วย
 
         res.json(property);
     } catch (error) {
@@ -204,36 +230,66 @@ adminRouter.get('/properties/:id', async (req, res) => {
     }
 });
 
+// [ 🔄 แทนที่ฟังก์ชันนี้ 🔄 ]
 // POST (Create new property)
 adminRouter.post('/properties', async (req, res) => {
+    // ⭐️ 1. ใช้ client สำหรับ Transaction
+    const client = await pool.connect();
     try {
-        // --- ⬇️ [แก้ไข] เพิ่ม main_image_public_id จาก req.body ---
-        const { title, status, price, main_image_url, main_image_public_id, price_period, bedrooms, bathrooms, area_sqm, description } = req.body;
+        await client.query('BEGIN'); // ⭐️ 2. เริ่ม Transaction
+
+        // 3. ดึงข้อมูล property หลัก และ array 'amenities' (ที่เป็น ID)
+        const { title, status, price, main_image_url, main_image_public_id, price_period, bedrooms, bathrooms, area_sqm, description, amenities } = req.body;
+        
+        // 4. บันทึกลงตาราง 'properties'
         const sql = `INSERT INTO properties (title, status, price, main_image_url, main_image_public_id, price_period, bedrooms, bathrooms, area_sqm, description) 
                      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`;
         const values = [title, status, price, main_image_url, main_image_public_id, price_period, bedrooms, bathrooms, area_sqm, description];
-        // --- ⬆️ [แก้ไข] ---
+        
+        const { rows } = await client.query(sql, values);
+        const newPropertyId = rows[0].id; // ⭐️ 5. เอา ID ของ Property ที่เพิ่งสร้าง
 
-        const { rows } = await pool.query(sql, values);
-        res.status(201).json({ message: 'Property created successfully', id: rows[0].id });
+        // 6. บันทึกลงตาราง 'property_amenities' (ถ้ามี)
+        if (amenities && Array.isArray(amenities) && amenities.length > 0) {
+            const amenitiesPromises = amenities.map(amenityId => {
+                return client.query(
+                    'INSERT INTO property_amenities (property_id, amenity_id) VALUES ($1, $2)',
+                    [newPropertyId, amenityId]
+                );
+            });
+            await Promise.all(amenitiesPromises); // ⭐️ 7. รันพร้อมกันทั้งหมด
+        }
+
+        await client.query('COMMIT'); // ⭐️ 8. ยืนยัน Transaction (สำเร็จทั้งหมด)
+        res.status(201).json({ message: 'Property created successfully', id: newPropertyId });
+
     } catch (error) {
+        await client.query('ROLLBACK'); // ⭐️ 9. ถ้าพลาด ให้ยกเลิกทั้งหมด
         console.error('Error creating property:', error);
         res.status(500).json({ error: 'Database query failed' });
+    } finally {
+        client.release(); // ⭐️ 10. คืน Connection
     }
 });
 
+// [ 🔄 แทนที่ฟังก์ชันนี้ 🔄 ]
 // PUT (Update property by id)
 adminRouter.put('/properties/:id', async (req, res) => {
+    // ⭐️ 1. ใช้ client สำหรับ Transaction
+    const client = await pool.connect();
     try {
+        await client.query('BEGIN'); // ⭐️ 2. เริ่ม Transaction
         const { id } = req.params;
-
-        // --- ⬇️ [แก้ไข] รับ 'old_main_image_public_id' เพิ่ม ---
+        
+        // 3. ดึงข้อมูลทั้งหมด รวมถึง 'amenities'
         const { 
             title, status, price, main_image_url, main_image_public_id, 
             price_period, bedrooms, bathrooms, area_sqm, description,
-            old_main_image_public_id // ⭐️ รับค่าใหม่นี้จาก Frontend
+            old_main_image_public_id,
+            amenities // ⭐️ รับ Array ID ของ Amenities ใหม่
         } = req.body;
-
+        
+        // 4. อัปเดตตาราง 'properties'
         const sql = `UPDATE properties SET 
                         title = $1, status = $2, price = $3, main_image_url = $4, main_image_public_id = $5, 
                         price_period = $6, bedrooms = $7, bathrooms = $8, area_sqm = $9, description = $10 
@@ -242,33 +298,45 @@ adminRouter.put('/properties/:id', async (req, res) => {
             title, status, price, main_image_url, main_image_public_id, 
             price_period, bedrooms, bathrooms, area_sqm, description, id
         ];
-        // --- ⬆️ [แก้ไข] ---
-
-        // 1. อัปเดตฐานข้อมูล
-        const { rowCount } = await pool.query(sql, values);
+        
+        const { rowCount } = await client.query(sql, values);
         if (rowCount === 0) {
+            await client.query('ROLLBACK');
             return res.status(404).json({ message: 'Property not found' });
         }
 
-        // --- ⬇️ [เพิ่ม] Logic การลบรูปเก่าออกจาก Cloudinary ---
-        // 2. ถ้ามีการส่ง 'old_main_image_public_id' มา (แปลว่ามีการเปลี่ยนรูป) ให้ลบไฟล์เก่าทิ้ง
+        // 5. ⭐️ (สำคัญ) ลบ Amenities "เก่า" ทั้งหมดของ Property นี้
+        await client.query('DELETE FROM property_amenities WHERE property_id = $1', [id]);
+
+        // 6. ⭐️ เพิ่ม Amenities "ใหม่" เข้าไป (ถ้ามี)
+        if (amenities && Array.isArray(amenities) && amenities.length > 0) {
+            const amenitiesPromises = amenities.map(amenityId => {
+                return client.query(
+                    'INSERT INTO property_amenities (property_id, amenity_id) VALUES ($1, $2)',
+                    [id, amenityId]
+                );
+            });
+            await Promise.all(amenitiesPromises);
+        }
+
+        // 7. (เหมือนเดิม) ลบรูปเก่าออกจาก Cloudinary (ถ้ามี)
         if (old_main_image_public_id) {
             try {
-                console.log(`Deleting old main image: ${old_main_image_public_id}`);
                 await cloudinary.uploader.destroy(old_main_image_public_id);
             } catch (cldError) {
-                // ไม่ต้องหยุดการทำงานหลัก แค่ log error ไว้
-                // เพราะ DB อัปเดตสำเร็จแล้ว (รูปใหม่อยู่ในระบบแล้ว)
-                console.warn('Cloudinary destroy error (old image may be deleted):', cldError.message);
+                console.warn('Cloudinary destroy error:', cldError.message);
             }
         }
-        // --- ⬆️ [เพิ่ม] ---
 
+        await client.query('COMMIT'); // ⭐️ 8. ยืนยัน Transaction
         res.json({ message: 'Property updated successfully' });
 
     } catch (error) {
+        await client.query('ROLLBACK'); // ⭐️ 9. ถ้าพลาด ให้ยกเลิก
         console.error('Error updating property:', error);
         res.status(500).json({ error: 'Database query failed' });
+    } finally {
+        client.release(); // ⭐️ 10. คืน Connection
     }
 });
 
@@ -517,6 +585,7 @@ app.get('/api/properties/featured', async (req, res) => {
     }
 });
 
+// [ 🔄 แทนที่ฟังก์ชันนี้ 🔄 ]
 app.get('/api/properties/:id', async (req, res) => {
     try {
         const { id } = req.params;
@@ -525,8 +594,21 @@ app.get('/api/properties/:id', async (req, res) => {
 
         const imagesRes = await pool.query('SELECT id, image_url FROM property_images WHERE property_id = $1 ORDER BY created_at ASC', [id]);
         
+        // --- [ ⬇️ เพิ่มส่วนนี้ ⬇️ ] ---
+        // ดึง Amenities ที่ผูกกับ Property นี้
+        const amenitiesQuery = `
+            SELECT a.id, a.name, a.icon 
+            FROM amenities a
+            JOIN property_amenities pa ON a.id = pa.amenity_id
+            WHERE pa.property_id = $1
+            ORDER BY a.name;
+        `;
+        const amenitiesRes = await pool.query(amenitiesQuery, [id]);
+        // --- [ ⬆️ สิ้นสุดส่วนที่เพิ่ม ⬆️ ] ---
+        
         const property = propertyRes.rows[0];
         property.images = imagesRes.rows;
+        property.amenities = amenitiesRes.rows; // ⭐️ ผูกข้อมูล Amenities เข้าไปด้วย
 
         res.json(property);
     } catch(error){
