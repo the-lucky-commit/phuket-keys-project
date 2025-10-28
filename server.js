@@ -210,6 +210,106 @@ adminRouter.get('/amenities', async (req, res) => {
     }
 });
 
+// --- ⬇️ [เพิ่ม API ใหม่นี้] ⬇️ ---
+// GET: ดึงสถิติการค้นหา (Search Stats)
+adminRouter.get('/search-stats', async (req, res) => {
+    try {
+        // --- Query 1: Top 10 Keywords ---
+        const topKeywordsQuery = `
+            SELECT keyword, COUNT(*) as search_count
+            FROM search_logs
+            WHERE keyword IS NOT NULL AND keyword != ''
+            GROUP BY keyword
+            ORDER BY search_count DESC
+            LIMIT 10; 
+        `;
+
+        // --- Query 2: Top Property Types ---
+        const topTypesQuery = `
+            SELECT type, COUNT(*) as search_count
+            FROM search_logs
+            WHERE type IS NOT NULL AND type != 'All' 
+            GROUP BY type
+            ORDER BY search_count DESC
+            LIMIT 10;
+        `;
+
+        // --- Query 3: Status Counts ---
+        const statusCountsQuery = `
+            SELECT status, COUNT(*) as search_count
+            FROM search_logs
+            WHERE status IS NOT NULL
+            GROUP BY status
+            ORDER BY search_count DESC;
+        `;
+
+        // --- รัน Query ทั้งหมดพร้อมกัน ---
+        const [keywordsResult, typesResult, statusResult] = await Promise.all([
+            pool.query(topKeywordsQuery),
+            pool.query(topTypesQuery),
+            pool.query(statusCountsQuery)
+        ]);
+
+        // --- จัดรูปแบบข้อมูลส่งกลับ ---
+        res.json({
+            topKeywords: keywordsResult.rows,
+            topTypes: typesResult.rows,
+            statusCounts: statusResult.rows
+        });
+
+    } catch (error) {
+        console.error('Error fetching search stats:', error);
+        res.status(500).json({ error: 'Database query failed' });
+    }
+});
+
+// --- ⬇️ [เพิ่ม API ใหม่นี้] ⬇️ ---
+// GET: ดึงสถิติรายได้ (Revenue Stats)
+adminRouter.get('/revenue-stats', async (req, res) => {
+    try {
+        // Query เพื่อคำนวณรายได้ แยกตามประเภท
+        const revenueQuery = `
+            SELECT
+                -- 1. รายได้รวมทั้งหมด
+                SUM(final_price) AS total_revenue,
+                
+                -- 2. รายได้จากการขาย ('Sold')
+                SUM(CASE WHEN transaction_type = 'Sold' THEN final_price ELSE 0 END) AS sales_revenue,
+                
+                -- 3. รายได้จากการเช่า ('Rented')
+                SUM(CASE WHEN transaction_type = 'Rented' THEN final_price ELSE 0 END) AS rental_revenue,
+                
+                -- 4. (Bonus) จำนวน Transaction ทั้งหมด
+                COUNT(*) AS total_transactions,
+                
+                -- 5. (Bonus) จำนวนที่ขายได้
+                SUM(CASE WHEN transaction_type = 'Sold' THEN 1 ELSE 0 END) AS units_sold,
+                
+                -- 6. (Bonus) จำนวนที่เช่าได้
+                SUM(CASE WHEN transaction_type = 'Rented' THEN 1 ELSE 0 END) AS units_rented
+
+            FROM transactions; 
+        `; // ⭐️ ดึงจากตาราง transactions
+
+        const { rows } = await pool.query(revenueQuery);
+
+        // API จะ trả về แถวเดียวเสมอ (ถ้าไม่มีข้อมูลเลย จะเป็น null หรือ 0)
+        res.json(rows[0] || { // ⭐️ ใส่ค่า default ป้องกัน null
+            total_revenue: 0,
+            sales_revenue: 0,
+            rental_revenue: 0,
+            total_transactions: 0,
+            units_sold: 0,
+            units_rented: 0
+        });
+
+    } catch (error) {
+        console.error('Error fetching revenue stats:', error);
+        res.status(500).json({ error: 'Database query failed' });
+    }
+});
+// --- ⬆️ [สิ้นสุดการเพิ่ม] ⬆️ ---
+
 // --- ⬇️ [เพิ่ม API 3 เส้นนี้] ⬇️ ---
 
 // 1. GET: ดึง "ID" ของ Property ทั้งหมดที่ User คนนี้ถูกใจ
