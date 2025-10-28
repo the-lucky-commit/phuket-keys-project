@@ -75,10 +75,16 @@ const pool = new Pool({
 // --- AUTHENTICATION & AUTHORIZATION ---
 // =================================================================
 
+// [ 🔄 แทนที่ฟังก์ชันนี้ 🔄 ]
 app.post('/api/login', async (req, res) => {
     try {
         const { username, password } = req.body;
-        const { rows } = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
+
+        // --- ⬇️ [แก้ไข SQL Query] ⬇️ ---
+        // ⭐️ เพิ่มเงื่อนไข AND role = 'admin'
+        const { rows } = await pool.query('SELECT * FROM users WHERE username = $1 AND role = $2', [username, 'admin']);
+        // --- ⬆️ [สิ้นสุดการแก้ไข] ⬆️ ---
+
         if (rows.length === 0) {
             return res.status(401).json({ error: 'Invalid username or password' });
         }
@@ -87,10 +93,83 @@ app.post('/api/login', async (req, res) => {
         if (!isMatch) {
             return res.status(401).json({ error: 'Invalid username or password' });
         }
-        const accessToken = jwt.sign({ username: user.username, id: user.id }, process.env.JWT_SECRET, { expiresIn: '1d' });
+        // ⭐️ ส่ง role กลับไปด้วย (เผื่อ Frontend Admin อยากเช็ค)
+        const accessToken = jwt.sign({ username: user.username, id: user.id, role: user.role }, process.env.JWT_SECRET, { expiresIn: '1d' });
         res.json({ accessToken });
     } catch (error) {
-        console.error('Login error:', error);
+        console.error('Admin Login error:', error);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+// --- ⬇️ [เพิ่ม API ใหม่นี้] ⬇️ ---
+app.post('/api/register', async (req, res) => {
+    try {
+        const { username, password, email } = req.body; // สมมติว่ารับ email ด้วย
+
+        // 1. ตรวจสอบ Input
+        if (!username || !password || !email) {
+            return res.status(400).json({ error: 'Username, password, and email are required' });
+        }
+
+        // 2. เช็คว่า Username หรือ Email ซ้ำหรือไม่
+        const { rows: existingUsers } = await pool.query(
+            'SELECT * FROM users WHERE username = $1 OR email = $2',
+            [username, email]
+        );
+        if (existingUsers.length > 0) {
+            return res.status(409).json({ error: 'Username or email already exists' });
+        }
+
+        // 3. Hash รหัสผ่าน
+        const salt = await bcrypt.genSalt(10);
+        const hashedPassword = await bcrypt.hash(password, salt);
+
+        // 4. บันทึกลง DB (role จะเป็น 'customer' โดยอัตโนมัติจาก DEFAULT)
+        const { rows: newUsers } = await pool.query(
+            'INSERT INTO users (username, password, email) VALUES ($1, $2, $3) RETURNING id, username, role',
+            [username, hashedPassword, email]
+        );
+
+        const newUser = newUsers[0];
+
+        // 5. สร้าง Token ให้ลูกค้า Login ทันที
+        const accessToken = jwt.sign(
+            { username: newUser.username, id: newUser.id, role: newUser.role }, 
+            process.env.JWT_SECRET, 
+            { expiresIn: '1d' }
+        );
+
+        res.status(201).json({ accessToken }); // ⭐️ ส่ง Token กลับไป
+
+    } catch (error) {
+        console.error('Customer Register error:', error);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+// --- ⬇️ [เพิ่ม API ใหม่นี้] ⬇️ ---
+app.post('/api/customer-login', async (req, res) => {
+    try {
+        const { username, password } = req.body; // หรือจะใช้ email login ก็ได้
+
+        // ⭐️ เช็ค Role 'customer'
+        const { rows } = await pool.query('SELECT * FROM users WHERE username = $1 AND role = $2', [username, 'customer']);
+
+        if (rows.length === 0) {
+            return res.status(401).json({ error: 'Invalid credentials or not a customer account' });
+        }
+        const user = rows[0];
+        const isMatch = await bcrypt.compare(password, user.password);
+        if (!isMatch) {
+            return res.status(401).json({ error: 'Invalid credentials' });
+        }
+
+        // ⭐️ สร้าง Token (มี role: 'customer')
+        const accessToken = jwt.sign({ username: user.username, id: user.id, role: user.role }, process.env.JWT_SECRET, { expiresIn: '1d' });
+        res.json({ accessToken });
+    } catch (error) {
+        console.error('Customer Login error:', error);
         res.status(500).json({ error: 'Server error' });
     }
 });
@@ -116,6 +195,9 @@ const verifyToken = (req, res, next) => {
 const adminRouter = express.Router();
 adminRouter.use(verifyToken);
 
+const customerRouter = express.Router();
+customerRouter.use(verifyToken);
+
 // [ ⬇️ เพิ่มโค้ดนี้ ⬇️ ]
 // ดึงรายการ Amenities ทั้งหมดสำหรับหน้า Admin
 adminRouter.get('/amenities', async (req, res) => {
@@ -127,6 +209,76 @@ adminRouter.get('/amenities', async (req, res) => {
         res.status(500).json({ error: 'Database query failed' });
     }
 });
+
+// --- ⬇️ [เพิ่ม API 3 เส้นนี้] ⬇️ ---
+
+// 1. GET: ดึง "ID" ของ Property ทั้งหมดที่ User คนนี้ถูกใจ
+// (Frontend จะใช้ข้อมูลนี้เพื่อแสดงว่าหัวใจดวงไหน 'เต็ม')
+customerRouter.get('/favorites', async (req, res) => {
+    try {
+        const userId = req.user.id; // ⭐️ ได้ ID User จาก Token
+        const { rows } = await pool.query(
+            'SELECT property_id FROM user_favorites WHERE user_id = $1',
+            [userId]
+        );
+        // ⭐️ ส่งกลับเป็น Array ของ ID (เช่น [15, 22, 30])
+        const favoriteIds = rows.map(row => row.property_id);
+        res.json(favoriteIds);
+    } catch (error) {
+        console.error('Error fetching favorites:', error);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+// 2. POST: กด "ถูกใจ" (เพิ่ม Property ลงใน Favorites)
+customerRouter.post('/favorites', async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const { propertyId } = req.body; // ⭐️ รับ ID Property ที่จะถูกใจ
+
+        if (!propertyId) {
+            return res.status(400).json({ error: 'Property ID is required' });
+        }
+
+        // ⭐️ บันทึกลงตารางเชื่อม (ถ้าซ้ำ DB จะ error แต่เราจะดักไว้)
+        await pool.query(
+            'INSERT INTO user_favorites (user_id, property_id) VALUES ($1, $2)',
+            [userId, propertyId]
+        );
+        res.status(201).json({ message: 'Favorite added' });
+
+    } catch (error) {
+        if (error.code === '23505') { // 23505 = Unique constraint violation
+            return res.status(409).json({ error: 'Already favorited' });
+        }
+        console.error('Error adding favorite:', error);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+// 3. DELETE: กด "เลิกถูกใจ" (ลบ Property ออกจาก Favorites)
+customerRouter.delete('/favorites/:propertyId', async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const { propertyId } = req.params; // ⭐️ รับ ID Property จาก URL
+
+        const { rowCount } = await pool.query(
+            'DELETE FROM user_favorites WHERE user_id = $1 AND property_id = $2',
+            [userId, propertyId]
+        );
+
+        if (rowCount === 0) {
+            return res.status(404).json({ error: 'Favorite not found' });
+        }
+        res.json({ message: 'Favorite removed' });
+
+    } catch (error) {
+        console.error('Error removing favorite:', error);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+// --- ⬆️ [สิ้นสุดการเพิ่ม] ⬆️ ---
 
 // [ 🔄 แทนที่ฟังก์ชันนี้ 🔄 ]
 adminRouter.get('/stats', async (req, res) => {
@@ -491,6 +643,8 @@ adminRouter.delete('/images/:imageId', async (req, res) => {
 });
 
 app.use('/api/admin', adminRouter);
+
+app.use('/api/customer', customerRouter);
 
 // --- Image Upload Endpoint (for main image) ---
 app.post('/api/upload', verifyToken, upload.single('image'), async (req, res) => {
