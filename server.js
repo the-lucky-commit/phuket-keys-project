@@ -80,10 +80,8 @@ app.post('/api/login', async (req, res) => {
     try {
         const { username, password } = req.body;
 
-        // --- ⬇️ [แก้ไข SQL Query] ⬇️ ---
-        // ⭐️ เพิ่มเงื่อนไข AND role = 'admin'
-        const { rows } = await pool.query('SELECT * FROM users WHERE username = $1 AND role = $2', [username, 'admin']);
-        // --- ⬆️ [สิ้นสุดการแก้ไข] ⬆️ ---
+        // Admin login - check admins table
+        const { rows } = await pool.query('SELECT * FROM admins WHERE username = $1', [username]);
 
         if (rows.length === 0) {
             return res.status(401).json({ error: 'Invalid username or password' });
@@ -93,7 +91,6 @@ app.post('/api/login', async (req, res) => {
         if (!isMatch) {
             return res.status(401).json({ error: 'Invalid username or password' });
         }
-        // ⭐️ ส่ง role กลับไปด้วย (เผื่อ Frontend Admin อยากเช็ค)
         const accessToken = jwt.sign({ username: user.username, id: user.id, role: user.role }, process.env.JWT_SECRET, { expiresIn: '1d' });
         res.json({ accessToken });
     } catch (error) {
@@ -308,6 +305,154 @@ adminRouter.get('/revenue-stats', async (req, res) => {
         res.status(500).json({ error: 'Database query failed' });
     }
 });
+
+// API endpoint สำหรับ monthly revenue
+adminRouter.get('/monthly-revenue', async (req, res) => {
+    try {
+        const monthlyRevenueQuery = `
+            SELECT
+                TO_CHAR(transaction_date, 'Mon') AS month,
+                EXTRACT(MONTH FROM transaction_date) AS month_num,
+                SUM(CASE WHEN transaction_type = 'Sold' THEN final_price ELSE 0 END) AS sales,
+                SUM(CASE WHEN transaction_type = 'Rented' THEN final_price ELSE 0 END) AS rental
+            FROM transactions
+            WHERE EXTRACT(YEAR FROM transaction_date) = EXTRACT(YEAR FROM CURRENT_DATE)
+            GROUP BY month, month_num
+            ORDER BY month_num;
+        `;
+
+        const { rows } = await pool.query(monthlyRevenueQuery);
+
+        // สร้างข้อมูล 12 เดือนเต็ม (ถ้าเดือนไหนไม่มีข้อมูลจะเป็น 0)
+        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const monthlyData = months.map((month, index) => {
+            const existingData = rows.find(row => row.month_num === index + 1);
+            return {
+                month,
+                sales: existingData ? parseFloat(existingData.sales) : 0,
+                rental: existingData ? parseFloat(existingData.rental) : 0,
+            };
+        });
+
+        res.json(monthlyData);
+
+    } catch (error) {
+        console.error('Error fetching monthly revenue:', error);
+        res.status(500).json({ error: 'Database query failed' });
+    }
+});
+
+// API endpoint สำหรับ export ข้อมูลสรุปแยกตามเดือนและปี
+adminRouter.get('/export-summary', async (req, res) => {
+    try {
+        const { year, month } = req.query;
+        
+        // ดึงข้อมูล properties
+        const propertiesQuery = `
+            SELECT 
+                id,
+                title,
+                price,
+                status,
+                type,
+                bedrooms,
+                bathrooms,
+                area_sqm,
+                description,
+                created_at
+            FROM properties
+            ${year ? `WHERE EXTRACT(YEAR FROM created_at) = $1` : ''}
+            ${year && month ? `AND EXTRACT(MONTH FROM created_at) = $2` : ''}
+            ORDER BY created_at DESC;
+        `;
+        
+        const propertiesParams = [];
+        if (year) propertiesParams.push(year);
+        if (year && month) propertiesParams.push(month);
+        
+        const { rows: properties } = await pool.query(propertiesQuery, propertiesParams);
+
+        // ดึงข้อมูล transactions
+        const transactionsQuery = `
+            SELECT 
+                t.id,
+                t.property_id,
+                p.title as property_title,
+                t.transaction_type,
+                t.final_price,
+                t.transaction_date,
+                t.user_id,
+                u.username as customer_username,
+                u.email as customer_email
+            FROM transactions t
+            LEFT JOIN properties p ON t.property_id = p.id
+            LEFT JOIN users u ON t.user_id = u.id
+            ${year ? `WHERE EXTRACT(YEAR FROM t.transaction_date) = $1` : ''}
+            ${year && month ? `AND EXTRACT(MONTH FROM t.transaction_date) = $2` : ''}
+            ORDER BY t.transaction_date DESC;
+        `;
+        
+        const transactionsParams = [];
+        if (year) transactionsParams.push(year);
+        if (year && month) transactionsParams.push(month);
+        
+        const { rows: transactions } = await pool.query(transactionsQuery, transactionsParams);
+
+        // ดึงข้อมูลสถิติรวม
+        const statsQuery = `
+            SELECT
+                COUNT(*) FILTER (WHERE status = 'available') as available_count,
+                COUNT(*) FILTER (WHERE status = 'reserved') as reserved_count,
+                COUNT(*) FILTER (WHERE status = 'sold') as sold_count,
+                COUNT(*) FILTER (WHERE status = 'rented') as rented_count,
+                COUNT(*) as total_properties
+            FROM properties
+            ${year ? `WHERE EXTRACT(YEAR FROM created_at) = $1` : ''}
+            ${year && month ? `AND EXTRACT(MONTH FROM created_at) = $2` : ''};
+        `;
+        
+        const statsParams = [];
+        if (year) statsParams.push(year);
+        if (year && month) statsParams.push(month);
+        
+        const { rows: stats } = await pool.query(statsQuery, statsParams);
+
+        // ดึงข้อมูล revenue แยกตามเดือน (สำหรับปีที่เลือก)
+        const monthlyRevenueQuery = `
+            SELECT
+                TO_CHAR(transaction_date, 'Month YYYY') AS period,
+                EXTRACT(MONTH FROM transaction_date) AS month_num,
+                EXTRACT(YEAR FROM transaction_date) AS year_num,
+                SUM(CASE WHEN transaction_type = 'Sold' THEN final_price ELSE 0 END) AS sales_revenue,
+                SUM(CASE WHEN transaction_type = 'Rented' THEN final_price ELSE 0 END) AS rental_revenue,
+                SUM(final_price) AS total_revenue,
+                COUNT(*) FILTER (WHERE transaction_type = 'Sold') AS units_sold,
+                COUNT(*) FILTER (WHERE transaction_type = 'Rented') AS units_rented
+            FROM transactions
+            ${year ? `WHERE EXTRACT(YEAR FROM transaction_date) = $1` : ''}
+            GROUP BY period, month_num, year_num
+            ORDER BY year_num DESC, month_num DESC;
+        `;
+        
+        const monthlyRevenueParams = year ? [year] : [];
+        const { rows: monthlyRevenue } = await pool.query(monthlyRevenueQuery, monthlyRevenueParams);
+
+        res.json({
+            properties,
+            transactions,
+            stats: stats[0],
+            monthlyRevenue,
+            filters: {
+                year: year || 'all',
+                month: month || 'all'
+            }
+        });
+
+    } catch (error) {
+        console.error('Error fetching export summary:', error);
+        res.status(500).json({ error: 'Database query failed' });
+    }
+});
 // --- ⬆️ [สิ้นสุดการเพิ่ม] ⬆️ ---
 
 // --- ⬇️ [เพิ่ม API 3 เส้นนี้] ⬇️ ---
@@ -383,23 +528,35 @@ customerRouter.delete('/favorites/:propertyId', async (req, res) => {
 // [ 🔄 แทนที่ฟังก์ชันนี้ 🔄 ]
 adminRouter.get('/stats', async (req, res) => {
     try {
-        // ⭐️ 1. อัปเดต SQL query
         const statsQuery = `
             SELECT
                 COUNT(*) AS total_properties,
-                SUM(CASE WHEN status = 'For Sale' THEN 1 ELSE 0 END) AS for_sale,
-                SUM(CASE WHEN status = 'For Rent' THEN 1 ELSE 0 END) AS for_rent,
-
-                -- ⭐️ 2. เพิ่มการนับ 'availability' (ที่ลูกค้าต้องการ)
-                SUM(CASE WHEN availability = 'Available' THEN 1 ELSE 0 END) AS available,
-                SUM(CASE WHEN availability = 'Reserved' THEN 1 ELSE 0 END) AS reserved,
-
-                -- ⭐️ 3. (Bonus) นับ "เช่ารายวัน" ที่เราเพิ่งเพิ่ม
-                SUM(CASE WHEN status = 'For Rent (Daily)' THEN 1 ELSE 0 END) AS for_rent_daily
+                SUM(CASE WHEN status = 'Available' THEN 1 ELSE 0 END) AS available,
+                SUM(CASE WHEN status = 'Sold' THEN 1 ELSE 0 END) AS sold,
+                SUM(CASE WHEN status = 'Rented' THEN 1 ELSE 0 END) AS rented,
+                SUM(CASE WHEN status = 'Reserved' THEN 1 ELSE 0 END) AS reserved
             FROM properties;
         `;
         const { rows } = await pool.query(statsQuery);
-        res.json(rows[0]);
+        
+        // Get user count
+        const userCount = await pool.query('SELECT COUNT(*) as count FROM users');
+        
+        // Get transaction stats
+        const transactionStats = await pool.query(`
+            SELECT 
+                COUNT(*) FILTER (WHERE transaction_type = 'Sold') as total_sold,
+                COUNT(*) FILTER (WHERE transaction_type = 'Rented') as total_rented,
+                COALESCE(SUM(final_price) FILTER (WHERE transaction_type = 'Sold'), 0) as revenue_sold,
+                COALESCE(SUM(final_price) FILTER (WHERE transaction_type = 'Rented'), 0) as revenue_rented
+            FROM transactions
+        `);
+        
+        res.json({
+            ...rows[0],
+            total_users: parseInt(userCount.rows[0].count),
+            ...transactionStats.rows[0]
+        });
     } catch (error) {
         console.error('Error fetching dashboard stats:', error);
         res.status(500).json({ error: 'Database query failed' });
@@ -410,17 +567,18 @@ adminRouter.get('/properties', async (req, res) => {
     try {
         const { keyword, status } = req.query;
 
-        let baseQuery = 'SELECT id, main_image_url, title, status, price, created_at, availability, view_count FROM properties'; // ⭐️ เพิ่ม , view_count
+        let baseQuery = 'SELECT id, main_image, title, status, price, created_at, view_count, type, location, bedrooms, bathrooms FROM properties';
         const conditions = [];
         const values = [];
         let counter = 1;
 
         if (keyword) {
-            conditions.push(`LOWER(title) LIKE $${counter++}`);
+            conditions.push(`(LOWER(title) LIKE $${counter} OR LOWER(location) LIKE $${counter})`);
             values.push(`%${keyword.toLowerCase()}%`);
+            counter++;
         }
 
-        if (status && (status === 'For Sale' || status === 'For Rent')) {
+        if (status) {
             conditions.push(`status = $${counter++}`);
             values.push(status);
         }
@@ -793,6 +951,187 @@ app.use('/api/admin', adminRouter);
 
 app.use('/api/customer', customerRouter);
 
+// =================================================================
+// --- USER PROFILE API ENDPOINTS ---
+// =================================================================
+const userRouter = express.Router();
+userRouter.use(verifyToken);
+
+// Get user profile
+userRouter.get('/profile', async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const { rows } = await pool.query(
+            'SELECT id, username, email, full_name, phone, role, created_at FROM users WHERE id = $1',
+            [userId]
+        );
+        
+        if (rows.length === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+        
+        res.json(rows[0]);
+    } catch (error) {
+        console.error('Error fetching user profile:', error);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+// Update user profile
+userRouter.put('/profile', async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const { username, email, full_name, phone } = req.body;
+        
+        // Check if username already exists (if changing)
+        if (username) {
+            const { rows: existingUser } = await pool.query(
+                'SELECT id FROM users WHERE username = $1 AND id != $2',
+                [username, userId]
+            );
+            if (existingUser.length > 0) {
+                return res.status(400).json({ error: 'Username already taken' });
+            }
+        }
+        
+        // Check if email already exists (if changing)
+        if (email) {
+            const { rows: existingEmail } = await pool.query(
+                'SELECT id FROM users WHERE email = $1 AND id != $2',
+                [email, userId]
+            );
+            if (existingEmail.length > 0) {
+                return res.status(400).json({ error: 'Email already taken' });
+            }
+        }
+        
+        const { rows } = await pool.query(
+            'UPDATE users SET username = $1, email = $2, full_name = $3, phone = $4 WHERE id = $5 RETURNING id, username, email, full_name, phone, role, created_at',
+            [username, email, full_name, phone, userId]
+        );
+        
+        if (rows.length === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+        
+        res.json(rows[0]);
+    } catch (error) {
+        console.error('Error updating profile:', error);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+// Change password
+userRouter.put('/change-password', async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const { current_password, new_password } = req.body;
+        
+        // Get current password hash
+        const { rows } = await pool.query('SELECT password FROM users WHERE id = $1', [userId]);
+        
+        if (rows.length === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+        
+        // Verify current password
+        const isMatch = await bcrypt.compare(current_password, rows[0].password);
+        if (!isMatch) {
+            return res.status(401).json({ error: 'Current password is incorrect' });
+        }
+        
+        // Hash new password
+        const hashedPassword = await bcrypt.hash(new_password, 10);
+        
+        // Update password
+        await pool.query('UPDATE users SET password = $1 WHERE id = $2', [hashedPassword, userId]);
+        
+        res.json({ message: 'Password changed successfully' });
+    } catch (error) {
+        console.error('Error changing password:', error);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+// Get user favorites
+userRouter.get('/favorites', async (req, res) => {
+    try {
+        const userId = req.user.id;
+        
+        const { rows } = await pool.query(`
+            SELECT 
+                f.id,
+                f.property_id,
+                f.created_at as added_at,
+                p.title as property_title,
+                p.price as property_price,
+                p.main_image_url as property_image
+            FROM favorites f
+            JOIN properties p ON f.property_id = p.id
+            WHERE f.user_id = $1
+            ORDER BY f.created_at DESC
+        `, [userId]);
+        
+        res.json(rows);
+    } catch (error) {
+        console.error('Error fetching favorites:', error);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+// Add favorite
+userRouter.post('/favorites/:propertyId', async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const propertyId = parseInt(req.params.propertyId);
+        
+        // Check if already favorited
+        const { rows: existing } = await pool.query(
+            'SELECT id FROM favorites WHERE user_id = $1 AND property_id = $2',
+            [userId, propertyId]
+        );
+        
+        if (existing.length > 0) {
+            return res.status(409).json({ message: 'Already in favorites' });
+        }
+        
+        // Add to favorites
+        await pool.query(
+            'INSERT INTO favorites (user_id, property_id) VALUES ($1, $2)',
+            [userId, propertyId]
+        );
+        
+        res.json({ message: 'Added to favorites' });
+    } catch (error) {
+        console.error('Error adding favorite:', error);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+// Remove favorite
+userRouter.delete('/favorites/:propertyId', async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const propertyId = parseInt(req.params.propertyId);
+        
+        const result = await pool.query(
+            'DELETE FROM favorites WHERE user_id = $1 AND property_id = $2',
+            [userId, propertyId]
+        );
+        
+        if (result.rowCount === 0) {
+            return res.status(404).json({ error: 'Favorite not found' });
+        }
+        
+        res.json({ message: 'Removed from favorites' });
+    } catch (error) {
+        console.error('Error removing favorite:', error);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+app.use('/api/users', userRouter);
+
 // --- Image Upload Endpoint (for main image) ---
 app.post('/api/upload', verifyToken, upload.single('image'), async (req, res) => {
   try {
@@ -988,8 +1327,355 @@ app.post('/api/log-search', async (req, res) => {
 // --- ⬆️ [สิ้นสุดการเพิ่ม] ⬆️ ---
 
 // =================================================================
+// --- USER MANAGEMENT ROUTES ---
+// =================================================================
+
+// Get all users
+adminRouter.get('/users', async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT id, username, email, role, created_at FROM users ORDER BY created_at DESC'
+    );
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error fetching users:', error);
+    res.status(500).json({ error: 'Failed to fetch users' });
+  }
+});
+
+// Delete user
+adminRouter.delete('/users/:id', async (req, res) => {
+  const { id } = req.params;
+  
+  try {
+    // ตรวจสอบว่าไม่ใช่ admin
+    const userCheck = await pool.query('SELECT role FROM users WHERE id = $1', [id]);
+    
+    if (userCheck.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    if (userCheck.rows[0].role === 'admin') {
+      return res.status(403).json({ error: 'Cannot delete admin user' });
+    }
+    
+    await pool.query('DELETE FROM users WHERE id = $1', [id]);
+    res.json({ message: 'User deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting user:', error);
+    res.status(500).json({ error: 'Failed to delete user' });
+  }
+});
+
+// =================================================================
 // --- SERVER START ---
 // =================================================================
+// ==================== ADMIN DASHBOARD APIs ====================
+
+// Get dashboard statistics
+adminRouter.get('/stats', async (req, res) => {
+    try {
+        const totalProperties = await pool.query('SELECT COUNT(*) as count FROM properties');
+        const totalUsers = await pool.query('SELECT COUNT(*) as count FROM users');
+        const totalSold = await pool.query('SELECT COUNT(*) as count FROM transactions WHERE transaction_type = $1', ['Sold']);
+        const totalRented = await pool.query('SELECT COUNT(*) as count FROM transactions WHERE transaction_type = $1', ['Rented']);
+        const totalRevenue = await pool.query('SELECT COALESCE(SUM(final_price), 0) as total FROM transactions WHERE transaction_type = $1', ['Sold']);
+        const totalRentRevenue = await pool.query('SELECT COALESCE(SUM(final_price), 0) as total FROM transactions WHERE transaction_type = $1', ['Rented']);
+
+        res.json({
+            totalProperties: parseInt(totalProperties.rows[0].count),
+            totalUsers: parseInt(totalUsers.rows[0].count),
+            totalSold: parseInt(totalSold.rows[0].count),
+            totalRented: parseInt(totalRented.rows[0].count),
+            totalRevenue: parseFloat(totalRevenue.rows[0].total),
+            totalRentRevenue: parseFloat(totalRentRevenue.rows[0].total)
+        });
+    } catch (error) {
+        console.error('Error fetching stats:', error);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+// Get properties by type
+app.get('/api/admin/properties-by-type', async (req, res) => {
+    try {
+        const { rows } = await pool.query(`
+            SELECT type, COUNT(*) as count 
+            FROM properties 
+            GROUP BY type
+            ORDER BY count DESC
+        `);
+        res.json(rows);
+    } catch (error) {
+        console.error('Error fetching properties by type:', error);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+// Get search statistics
+app.get('/api/admin/search-stats', async (req, res) => {
+    try {
+        const { rows } = await pool.query(`
+            SELECT 
+                keyword,
+                COUNT(*) as count
+            FROM search_logs
+            WHERE keyword IS NOT NULL AND keyword != ''
+            GROUP BY keyword
+            ORDER BY count DESC
+            LIMIT 10
+        `);
+        res.json(rows);
+    } catch (error) {
+        console.error('Error fetching search stats:', error);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+// Get revenue statistics
+app.get('/api/admin/revenue-stats', async (req, res) => {
+    try {
+        const { rows } = await pool.query(`
+            SELECT 
+                TO_CHAR(transaction_date, 'YYYY-MM') as month,
+                transaction_type,
+                SUM(final_price) as revenue
+            FROM transactions
+            GROUP BY TO_CHAR(transaction_date, 'YYYY-MM'), transaction_type
+            ORDER BY month DESC
+            LIMIT 12
+        `);
+        res.json(rows);
+    } catch (error) {
+        console.error('Error fetching revenue stats:', error);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+// Get all properties (admin)
+app.get('/api/admin/properties', async (req, res) => {
+    try {
+        const { keyword, status } = req.query;
+        let query = 'SELECT * FROM properties WHERE 1=1';
+        const params = [];
+
+        if (keyword) {
+            params.push(`%${keyword}%`);
+            query += ` AND (title ILIKE $${params.length} OR location ILIKE $${params.length})`;
+        }
+
+        if (status) {
+            params.push(status);
+            query += ` AND status = $${params.length}`;
+        }
+
+        query += ' ORDER BY created_at DESC';
+
+        const { rows } = await pool.query(query, params);
+        res.json(rows);
+    } catch (error) {
+        console.error('Error fetching admin properties:', error);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+// Get single property (admin)
+app.get('/api/admin/properties/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { rows } = await pool.query('SELECT * FROM properties WHERE id = $1', [id]);
+        
+        if (rows.length === 0) {
+            return res.status(404).json({ error: 'Property not found' });
+        }
+
+        // Get amenities
+        const amenitiesResult = await pool.query(`
+            SELECT a.* FROM amenities a
+            JOIN property_amenities pa ON a.id = pa.amenity_id
+            WHERE pa.property_id = $1
+        `, [id]);
+
+        // Get images
+        const imagesResult = await pool.query(
+            'SELECT * FROM property_images WHERE property_id = $1 ORDER BY display_order',
+            [id]
+        );
+
+        res.json({
+            ...rows[0],
+            amenities: amenitiesResult.rows,
+            images: imagesResult.rows
+        });
+    } catch (error) {
+        console.error('Error fetching property:', error);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+// Get all amenities
+app.get('/api/admin/amenities', async (req, res) => {
+    try {
+        const { rows } = await pool.query('SELECT * FROM amenities ORDER BY name');
+        res.json(rows);
+    } catch (error) {
+        console.error('Error fetching amenities:', error);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+// Create new property
+app.post('/api/admin/properties', async (req, res) => {
+    try {
+        const {
+            title, description, type, status, price, location,
+            bedrooms, bathrooms, area, main_image, is_featured, amenities
+        } = req.body;
+
+        const { rows } = await pool.query(`
+            INSERT INTO properties (
+                title, description, type, status, price, location,
+                bedrooms, bathrooms, area, main_image, is_featured
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            RETURNING *
+        `, [title, description, type, status, price, location, bedrooms, bathrooms, area, main_image, is_featured]);
+
+        const property = rows[0];
+
+        // Add amenities if provided
+        if (amenities && amenities.length > 0) {
+            for (const amenityId of amenities) {
+                await pool.query(
+                    'INSERT INTO property_amenities (property_id, amenity_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+                    [property.id, amenityId]
+                );
+            }
+        }
+
+        res.status(201).json(property);
+    } catch (error) {
+        console.error('Error creating property:', error);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+// Update property
+app.put('/api/admin/properties/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const {
+            title, description, type, status, price, location,
+            bedrooms, bathrooms, area, main_image, is_featured, amenities
+        } = req.body;
+
+        const { rows } = await pool.query(`
+            UPDATE properties SET
+                title = $1, description = $2, type = $3, status = $4,
+                price = $5, location = $6, bedrooms = $7, bathrooms = $8,
+                area = $9, main_image = $10, is_featured = $11, updated_at = NOW()
+            WHERE id = $12
+            RETURNING *
+        `, [title, description, type, status, price, location, bedrooms, bathrooms, area, main_image, is_featured, id]);
+
+        if (rows.length === 0) {
+            return res.status(404).json({ error: 'Property not found' });
+        }
+
+        // Update amenities
+        if (amenities) {
+            await pool.query('DELETE FROM property_amenities WHERE property_id = $1', [id]);
+            for (const amenityId of amenities) {
+                await pool.query(
+                    'INSERT INTO property_amenities (property_id, amenity_id) VALUES ($1, $2)',
+                    [id, amenityId]
+                );
+            }
+        }
+
+        res.json(rows[0]);
+    } catch (error) {
+        console.error('Error updating property:', error);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+// Delete property
+app.delete('/api/admin/properties/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { rows } = await pool.query('DELETE FROM properties WHERE id = $1 RETURNING *', [id]);
+        
+        if (rows.length === 0) {
+            return res.status(404).json({ error: 'Property not found' });
+        }
+
+        res.json({ message: 'Property deleted successfully' });
+    } catch (error) {
+        console.error('Error deleting property:', error);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+// Close deal (sell/rent property)
+app.post('/api/admin/properties/:id/close-deal', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { transaction_type, final_price, user_id } = req.body;
+
+        // Update property status
+        const statusMap = {
+            'Sold': 'Sold',
+            'Rented': 'Rented'
+        };
+        
+        await pool.query(
+            'UPDATE properties SET status = $1, updated_at = NOW() WHERE id = $2',
+            [statusMap[transaction_type], id]
+        );
+
+        // Create transaction record
+        const { rows } = await pool.query(`
+            INSERT INTO transactions (property_id, transaction_type, final_price, user_id)
+            VALUES ($1, $2, $3, $4)
+            RETURNING *
+        `, [id, transaction_type, final_price, user_id]);
+
+        res.json(rows[0]);
+    } catch (error) {
+        console.error('Error closing deal:', error);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+// ==================== END ADMIN APIs ====================
+
+// Create favorites table if not exists
+async function initializeDatabase() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS favorites (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(user_id, property_id)
+      )
+    `);
+    
+    // Add full_name and phone columns to users table if they don't exist
+    await pool.query(`
+      ALTER TABLE users 
+      ADD COLUMN IF NOT EXISTS full_name VARCHAR(255),
+      ADD COLUMN IF NOT EXISTS phone VARCHAR(20)
+    `);
+    
+    console.log('✅ Database tables initialized successfully');
+  } catch (error) {
+    console.error('❌ Error initializing database:', error);
+  }
+}
+
+initializeDatabase();
 app.listen(port, () => {
     console.log(`Server is running on port ${port}`);
 });
