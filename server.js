@@ -1170,14 +1170,14 @@ app.get('/api/properties', async (req, res) => {
         const offset = (page - 1) * limit;
 
         // --- 1. อ่านค่า Filter ใหม่ ---
-        const { status, keyword, type, minPrice, maxPrice } = req.query;
+        const { status, keyword, type, minPrice, maxPrice, type_of_sale } = req.query;
 
         let baseQuery = 'FROM properties';
         const conditions = [];
         const values = [];
         let counter = 1;
 
-        // --- 2. สร้าง WHERE clause (เพิ่มเงื่อนไข type, minPrice, maxPrice) ---
+        // --- 2. สร้าง WHERE clause (เพิ่มเงื่อนไข type, minPrice, maxPrice, type_of_sale) ---
         if (status && status !== '') {
             conditions.push(`status = $${counter++}`);
             values.push(status);
@@ -1192,6 +1192,10 @@ app.get('/api/properties', async (req, res) => {
         if (type && typeof type === 'string' && type.trim() !== '' && type !== 'All') { // เพิ่มเงื่อนไข type
             conditions.push(`type = $${counter++}`);
             values.push(type);
+        }
+        if (type_of_sale && typeof type_of_sale === 'string' && type_of_sale.trim() !== '') {
+            conditions.push(`type_of_sale = $${counter++}`);
+            values.push(type_of_sale);
         }
         if (minPrice && !isNaN(parseFloat(minPrice))) { // ลบ as string ตรงนี้
         conditions.push(`price >= $${counter++}`);
@@ -1667,6 +1671,34 @@ async function initializeDatabase() {
       ALTER TABLE users 
       ADD COLUMN IF NOT EXISTS full_name VARCHAR(255),
       ADD COLUMN IF NOT EXISTS phone VARCHAR(20)
+    `);
+    
+    // Add type_of_sale column to properties table if it doesn't exist
+    await pool.query(`
+      ALTER TABLE properties 
+      ADD COLUMN IF NOT EXISTS type_of_sale VARCHAR(20) DEFAULT 'For Sale'
+    `);
+    
+    // Update properties based on their titles
+    await pool.query(`
+      UPDATE properties 
+      SET type_of_sale = 'Daily Rent' 
+      WHERE LOWER(title) LIKE '%daily%'
+    `);
+    
+    await pool.query(`
+      UPDATE properties 
+      SET type_of_sale = 'For Rent' 
+      WHERE LOWER(title) LIKE '%rent%' 
+      AND LOWER(title) NOT LIKE '%daily%'
+      AND type_of_sale != 'Daily Rent'
+    `);
+    
+    await pool.query(`
+      UPDATE properties 
+      SET type_of_sale = 'For Sale' 
+      WHERE (LOWER(title) LIKE '%sale%' OR type_of_sale = 'For Sale')
+      AND LOWER(title) NOT LIKE '%rent%'
     `);
     
     console.log('✅ Database tables initialized successfully');
