@@ -1654,10 +1654,18 @@ app.post('/api/admin/properties/:id/close-deal', async (req, res) => {
 // ⭐️ RESET PROPERTIES ENDPOINT (Development only - protect in production!)
 app.post('/api/admin/reset-properties', async (req, res) => {
   try {
-    console.log('⭐️ Adding type_of_sale column if not exists...');
+    console.log('⭐️ Adding missing columns if not exists...');
+    
+    // Add type_of_sale column
     await pool.query(`
       ALTER TABLE properties 
       ADD COLUMN IF NOT EXISTS type_of_sale VARCHAR(20) DEFAULT 'For Sale'
+    `);
+    
+    // Add price_period column
+    await pool.query(`
+      ALTER TABLE properties 
+      ADD COLUMN IF NOT EXISTS price_period VARCHAR(20)
     `);
     
     console.log('🗑️  Deleting all existing properties...');
