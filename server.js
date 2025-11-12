@@ -1651,6 +1651,84 @@ app.post('/api/admin/properties/:id/close-deal', async (req, res) => {
     }
 });
 
+// ⭐️ RESET PROPERTIES ENDPOINT (Development only - protect in production!)
+app.post('/api/admin/reset-properties', async (req, res) => {
+  try {
+    console.log('🗑️  Deleting all existing properties...');
+    await pool.query('DELETE FROM properties');
+    
+    console.log('📝 Creating new sample properties...');
+    
+    const properties = [
+      // FOR SALE Properties (10 properties)
+      { title: 'Luxury Pool Villa Surin', description: 'Stunning 3-bedroom pool villa in Surin Beach area. Modern design with sea view.', price: 15000000, price_period: null, type: 'Villa', bedrooms: 3, bathrooms: 3, area: 250, location: 'Surin, Phuket', status: 'Available', type_of_sale: 'For Sale', main_image_url: 'https://images.unsplash.com/photo-1613490493576-7fde63acd811?w=800' },
+      { title: 'Modern Condo Laguna Complex', description: 'Brand new 2-bedroom condo in prestigious Laguna area with golf course view.', price: 6000000, price_period: null, type: 'Condo', bedrooms: 2, bathrooms: 2, area: 85, location: 'Laguna, Phuket', status: 'Available', type_of_sale: 'For Sale', main_image_url: 'https://images.unsplash.com/photo-1545324418-cc1a3fa10c00?w=800' },
+      { title: 'Beachfront Villa Bang Tao', description: 'Exclusive beachfront villa with private beach access. 5 bedrooms with infinity pool.', price: 25000000, price_period: null, type: 'Villa', bedrooms: 5, bathrooms: 4, area: 400, location: 'Bang Tao, Phuket', status: 'Available', type_of_sale: 'For Sale', main_image_url: 'https://images.unsplash.com/photo-1512917774080-9991f1c4c750?w=800' },
+      { title: 'Family Villa Rawai', description: 'Perfect family home with 4 bedrooms, large garden and pool in peaceful Rawai.', price: 12000000, price_period: null, type: 'Villa', bedrooms: 4, bathrooms: 3, area: 300, location: 'Rawai, Phuket', status: 'Available', type_of_sale: 'For Sale', main_image_url: 'https://images.unsplash.com/photo-1600596542815-ffad4c1539a9?w=800' },
+      { title: 'Penthouse Panorama Patong', description: 'Luxury penthouse with 360° panoramic views of Patong Bay. 3 bedrooms, rooftop terrace.', price: 18000000, price_period: null, type: 'Condo', bedrooms: 3, bathrooms: 3, area: 180, location: 'Patong, Phuket', status: 'Reserved', type_of_sale: 'For Sale', main_image_url: 'https://images.unsplash.com/photo-1600607687939-ce8a6c25118c?w=800' },
+      { title: 'Tropical House Kamala', description: 'Charming tropical house near Kamala Beach. 3 bedrooms with lush garden.', price: 9500000, price_period: null, type: 'House', bedrooms: 3, bathrooms: 2, area: 200, location: 'Kamala, Phuket', status: 'Available', type_of_sale: 'For Sale', main_image_url: 'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?w=800' },
+      { title: 'Investment Land Chalong', description: 'Prime development land in Chalong area. 2 rai with road access and utilities.', price: 8000000, price_period: null, type: 'Land', bedrooms: null, bathrooms: null, area: 3200, location: 'Chalong, Phuket', status: 'Available', type_of_sale: 'For Sale', main_image_url: 'https://images.unsplash.com/photo-1500382017468-9049fed747ef?w=800' },
+      { title: 'Townhouse Complex Kathu', description: 'Modern 3-bedroom townhouse in secure complex with communal pool and gym.', price: 4500000, price_period: null, type: 'Townhouse', bedrooms: 3, bathrooms: 2, area: 120, location: 'Kathu, Phuket', status: 'Available', type_of_sale: 'For Sale', main_image_url: 'https://images.unsplash.com/photo-1600047509807-ba8f99d2cdde?w=800' },
+      { title: 'Studio Apartment Karon Beach', description: 'Cozy studio apartment just 200m from Karon Beach. Perfect for investment.', price: 1800000, price_period: null, type: 'Apartment', bedrooms: 1, bathrooms: 1, area: 35, location: 'Karon, Phuket', status: 'Available', type_of_sale: 'For Sale', main_image_url: 'https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?w=800' },
+      { title: 'Shophouse Phuket Town', description: '3-story shophouse in old town. Ground floor commercial, 2 floors residential.', price: 10000000, price_period: null, type: 'Shophouse', bedrooms: 4, bathrooms: 3, area: 220, location: 'Phuket Town', status: 'Sold', type_of_sale: 'For Sale', main_image_url: 'https://images.unsplash.com/photo-1582268611958-ebfd161ef9cf?w=800' },
+      
+      // FOR RENT Properties (10 properties)
+      { title: 'Seaside Condo Monthly Patong', description: 'Fully furnished 2-bedroom condo for long-term rent. Sea view, pool, gym.', price: 35000, price_period: 'month', type: 'Condo', bedrooms: 2, bathrooms: 2, area: 75, location: 'Patong, Phuket', status: 'Available', type_of_sale: 'For Rent', main_image_url: 'https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?w=800' },
+      { title: 'Garden Villa Long-term Cherngtalay', description: 'Beautiful 3-bedroom villa with garden. Available for 1-year lease.', price: 60000, price_period: 'month', type: 'Villa', bedrooms: 3, bathrooms: 3, area: 220, location: 'Cherngtalay, Phuket', status: 'Available', type_of_sale: 'For Rent', main_image_url: 'https://images.unsplash.com/photo-1600585154526-990dced4db0d?w=800' },
+      { title: 'Budget Room Phuket Town', description: 'Affordable 1-bedroom apartment in town center. Perfect for workers.', price: 800, price_period: 'month', type: 'Apartment', bedrooms: 1, bathrooms: 1, area: 28, location: 'Phuket Town', status: 'Available', type_of_sale: 'For Rent', main_image_url: 'https://images.unsplash.com/photo-1560448204-e02f11c3d0e2?w=800' },
+      { title: 'Romantic Hideaway Kamala', description: 'Cozy 2-bedroom house with mountain view. Peaceful location, pets allowed.', price: 28000, price_period: 'month', type: 'House', bedrooms: 2, bathrooms: 2, area: 90, location: 'Kamala, Phuket', status: 'Available', type_of_sale: 'For Rent', main_image_url: 'https://images.unsplash.com/photo-1600566753190-17f0baa2a6c3?w=800' },
+      { title: 'Luxury Pool Villa Nai Harn', description: 'Premium 4-bedroom pool villa near Nai Harn Beach. Fully serviced.', price: 120000, price_period: 'month', type: 'Villa', bedrooms: 4, bathrooms: 4, area: 320, location: 'Nai Harn, Phuket', status: 'Reserved', type_of_sale: 'For Rent', main_image_url: 'https://images.unsplash.com/photo-1600607687920-4e2a09cf159d?w=800' },
+      { title: 'Office Space Central Festival', description: 'Modern office space in Central Festival area. 80 sqm with parking.', price: 45000, price_period: 'month', type: 'Commercial', bedrooms: null, bathrooms: 2, area: 80, location: 'Phuket Town', status: 'Available', type_of_sale: 'For Rent', main_image_url: 'https://images.unsplash.com/photo-1497366216548-37526070297c?w=800' },
+      { title: 'Student Studio Near University', description: 'Perfect for students. Furnished studio with WiFi, near PSU campus.', price: 6500, price_period: 'month', type: 'Apartment', bedrooms: 1, bathrooms: 1, area: 22, location: 'Kathu, Phuket', status: 'Available', type_of_sale: 'For Rent', main_image_url: 'https://images.unsplash.com/photo-1554995207-c18c203602cb?w=800' },
+      { title: 'Family House Rawai', description: '3-bedroom house with yard. Great for families. Near international school.', price: 42000, price_period: 'month', type: 'House', bedrooms: 3, bathrooms: 2, area: 160, location: 'Rawai, Phuket', status: 'Available', type_of_sale: 'For Rent', main_image_url: 'https://images.unsplash.com/photo-1600585154084-4e5fe7c39198?w=800' },
+      { title: 'Penthouse Laguna Area', description: 'Exclusive penthouse with private pool. 3 bedrooms, stunning views.', price: 95000, price_period: 'month', type: 'Condo', bedrooms: 3, bathrooms: 3, area: 200, location: 'Laguna, Phuket', status: 'Available', type_of_sale: 'For Rent', main_image_url: 'https://images.unsplash.com/photo-1600607687644-c7171b42498b?w=800' },
+      { title: 'Townhouse Chalong', description: 'Modern 2-bedroom townhouse in gated community. Pool and security.', price: 25000, price_period: 'month', type: 'Townhouse', bedrooms: 2, bathrooms: 2, area: 100, location: 'Chalong, Phuket', status: 'Available', type_of_sale: 'For Rent', main_image_url: 'https://images.unsplash.com/photo-1600047509358-9dc75507daeb?w=800' },
+      
+      // DAILY RENT Properties (10 properties)
+      { title: 'Beach Condo Patong Daily', description: 'Beachfront condo perfect for vacation. 2 beds, fully equipped kitchen.', price: 4500, price_period: 'day', type: 'Condo', bedrooms: 2, bathrooms: 2, area: 65, location: 'Patong, Phuket', status: 'Available', type_of_sale: 'Daily Rent', main_image_url: 'https://images.unsplash.com/photo-1611892440504-42a792e24d32?w=800' },
+      { title: 'Holiday Villa Kata Daily', description: 'Private pool villa for daily rental. Perfect for families. 3 bedrooms.', price: 8500, price_period: 'day', type: 'Villa', bedrooms: 3, bathrooms: 3, area: 180, location: 'Kata, Phuket', status: 'Available', type_of_sale: 'Daily Rent', main_image_url: 'https://images.unsplash.com/photo-1602343168117-bb8ffe3e2e9f?w=800' },
+      { title: 'Luxury Suite Surin Beach', description: 'Beachfront luxury suite with ocean view. Daily housekeeping included.', price: 12000, price_period: 'day', type: 'Condo', bedrooms: 2, bathrooms: 2, area: 95, location: 'Surin, Phuket', status: 'Available', type_of_sale: 'Daily Rent', main_image_url: 'https://images.unsplash.com/photo-1616594039964-ae9021a400a0?w=800' },
+      { title: 'Cozy Studio Karon Daily', description: 'Affordable studio for solo travelers or couples. Pool access.', price: 1800, price_period: 'day', type: 'Apartment', bedrooms: 1, bathrooms: 1, area: 30, location: 'Karon, Phuket', status: 'Available', type_of_sale: 'Daily Rent', main_image_url: 'https://images.unsplash.com/photo-1595526114035-0d45ed16cfbf?w=800' },
+      { title: 'Sunset Villa Kamala Beach', description: 'Stunning sunset views! 4-bedroom villa with infinity pool.', price: 15000, price_period: 'day', type: 'Villa', bedrooms: 4, bathrooms: 4, area: 280, location: 'Kamala, Phuket', status: 'Reserved', type_of_sale: 'Daily Rent', main_image_url: 'https://images.unsplash.com/photo-1600585154363-67eb9e2e2099?w=800' },
+      { title: 'Party Villa Bang Tao', description: 'Large villa for groups up to 12 guests. Private pool, BBQ area.', price: 18000, price_period: 'day', type: 'Villa', bedrooms: 6, bathrooms: 5, area: 450, location: 'Bang Tao, Phuket', status: 'Available', type_of_sale: 'Daily Rent', main_image_url: 'https://images.unsplash.com/photo-1600607687939-ce8a6c25118c?w=800' },
+      { title: 'Seaview Apartment Kalim', description: 'Modern apartment with sea view. 2 bedrooms, walking distance to beach.', price: 3200, price_period: 'day', type: 'Apartment', bedrooms: 2, bathrooms: 1, area: 55, location: 'Kalim, Phuket', status: 'Available', type_of_sale: 'Daily Rent', main_image_url: 'https://images.unsplash.com/photo-1600566752355-35792bedcfea?w=800' },
+      { title: 'Budget Room Near Beach', description: 'Clean and comfortable room for budget travelers. 5 min to Patong Beach.', price: 800, price_period: 'day', type: 'Apartment', bedrooms: 1, bathrooms: 1, area: 20, location: 'Patong, Phuket', status: 'Available', type_of_sale: 'Daily Rent', main_image_url: 'https://images.unsplash.com/photo-1631049307264-da0ec9d70304?w=800' },
+      { title: 'Honeymoon Suite Nai Harn', description: 'Romantic suite with private jacuzzi. Perfect for couples.', price: 6500, price_period: 'day', type: 'Condo', bedrooms: 1, bathrooms: 1, area: 50, location: 'Nai Harn, Phuket', status: 'Available', type_of_sale: 'Daily Rent', main_image_url: 'https://images.unsplash.com/photo-1618773928121-c32242e63f39?w=800' },
+      { title: 'Penthouse Daily Laguna', description: 'Luxury penthouse for short stays. Rooftop pool, golf course view.', price: 22000, price_period: 'day', type: 'Condo', bedrooms: 3, bathrooms: 3, area: 220, location: 'Laguna, Phuket', status: 'Available', type_of_sale: 'Daily Rent', main_image_url: 'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?w=800' }
+    ];
+
+    // Insert all properties
+    for (const prop of properties) {
+      await pool.query(`
+        INSERT INTO properties (
+          title, description, price, price_period, type, bedrooms, bathrooms, 
+          area, location, status, type_of_sale, main_image_url, view_count, created_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
+      `, [
+        prop.title, prop.description, prop.price, prop.price_period, prop.type,
+        prop.bedrooms, prop.bathrooms, prop.area, prop.location, prop.status,
+        prop.type_of_sale, prop.main_image_url,
+        Math.floor(Math.random() * 800) + 100 // Random view count
+      ]);
+    }
+
+    const summary = await pool.query(`
+      SELECT type_of_sale, COUNT(*) as count 
+      FROM properties 
+      GROUP BY type_of_sale
+    `);
+
+    res.json({ 
+      success: true, 
+      message: `Successfully created ${properties.length} properties`,
+      summary: summary.rows
+    });
+  } catch (error) {
+    console.error('Reset properties error:', error);
+    res.status(500).json({ error: 'Failed to reset properties' });
+  }
+});
+
 // ==================== END ADMIN APIs ====================
 
 // Create favorites table if not exists
