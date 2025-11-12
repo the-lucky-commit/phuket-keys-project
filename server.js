@@ -1656,16 +1656,13 @@ app.post('/api/admin/reset-properties', async (req, res) => {
   try {
     console.log('⭐️ Adding missing columns if not exists...');
     
-    // Add type_of_sale column
+    // Add all missing columns
     await pool.query(`
       ALTER TABLE properties 
-      ADD COLUMN IF NOT EXISTS type_of_sale VARCHAR(20) DEFAULT 'For Sale'
-    `);
-    
-    // Add price_period column
-    await pool.query(`
-      ALTER TABLE properties 
-      ADD COLUMN IF NOT EXISTS price_period VARCHAR(20)
+      ADD COLUMN IF NOT EXISTS type_of_sale VARCHAR(20) DEFAULT 'For Sale',
+      ADD COLUMN IF NOT EXISTS price_period VARCHAR(20),
+      ADD COLUMN IF NOT EXISTS main_image_url TEXT,
+      ADD COLUMN IF NOT EXISTS view_count INTEGER DEFAULT 0
     `);
     
     console.log('🗑️  Deleting all existing properties...');
