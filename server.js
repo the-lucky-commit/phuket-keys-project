@@ -1731,7 +1731,7 @@ app.post('/api/admin/reset-properties', async (req, res) => {
     });
   } catch (error) {
     console.error('Reset properties error:', error);
-    res.status(500).json({ error: 'Failed to reset properties' });
+    res.status(500).json({ error: 'Failed to reset properties', details: error.message });
   }
 });
 
